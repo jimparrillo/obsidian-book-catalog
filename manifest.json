@@ -1,0 +1,10 @@
+{
+  "id": "book-catalog",
+  "name": "Book Catalog",
+  "version": "0.1.0",
+  "minAppVersion": "1.0.0",
+  "description": "Scan a book's ISBN/UPC barcode to automatically create a catalogued note with metadata and cover image, queryable via Dataview.",
+  "author": "Jim Parrillo",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}
