@@ -115,6 +115,7 @@ views:
       - publisher
       - published
       - condition
+      - copies
       - valuation
       - isbn
     sort:
@@ -128,6 +129,7 @@ views:
       - publisher
       - published
       - condition
+      - copies
       - valuation
     sort:
       - property: published
@@ -141,6 +143,7 @@ views:
       - file.name
       - authors
       - publisher
+      - copies
       - valuation
       - isbn
     sort:
@@ -156,37 +159,17 @@ export default class BookCatalogPlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
-
-    this.addRibbonIcon("book", "Add Book by ISBN", () => {
-      new ISBNModal(this.app, this).open();
-    });
-
-    this.addCommand({
-      id: "add-book-by-isbn",
-      name: "Add book by ISBN",
-      callback: () => new ISBNModal(this.app, this).open(),
-    });
-
+    this.addRibbonIcon("book", "Add Book by ISBN", () => new ISBNModal(this.app, this).open());
+    this.addCommand({ id: "add-book-by-isbn", name: "Add book by ISBN", callback: () => new ISBNModal(this.app, this).open() });
     this.addSettingTab(new BookCatalogSettingTab(this.app, this));
   }
 
-  async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-  }
-
-  async saveSettings() {
-    await this.saveData(this.settings);
-  }
-
-  // ─── Ensure folder exists ─────────────────────────────────────────────────
+  async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
+  async saveSettings() { await this.saveData(this.settings); }
 
   async ensureFolder(path: string): Promise<void> {
-    if (!this.app.vault.getAbstractFileByPath(path)) {
-      await this.app.vault.createFolder(path);
-    }
+    if (!this.app.vault.getAbstractFileByPath(path)) await this.app.vault.createFolder(path);
   }
-
-  // ─── Recursively collect all files in a folder ───────────────────────────
 
   collectFiles(folder: TFolder, results: TFile[] = []): TFile[] {
     for (const child of folder.children) {
@@ -196,101 +179,55 @@ export default class BookCatalogPlugin extends Plugin {
     return results;
   }
 
-  // ─── Scan ENTIRE vault for book-tagged notes ─────────────────────────────
-  // Uses Obsidian's getAllTags() which is the canonical tag API.
-  // getAllTags() returns tags prefixed with "#", so we check for "#book".
-
   scanVaultForBookNotes(): TFile[] {
-    const root = this.app.vault.getRoot();
-    const allFiles = this.collectFiles(root);
-
-    return allFiles.filter((f) => {
+    return this.collectFiles(this.app.vault.getRoot()).filter((f) => {
       if (f.extension !== "md") return false;
       const cache = this.app.metadataCache.getFileCache(f);
-      if (!cache) return false;
-      const tags = getAllTags(cache);
-      return tags?.includes("#book") ?? false;
+      return cache ? (getAllTags(cache)?.includes("#book") ?? false) : false;
     });
   }
 
-  // ─── Find existing Book Catalog.base anywhere in vault ───────────────────
-
   findExistingBaseFile(): TFile | null {
-    const root = this.app.vault.getRoot();
-    const allFiles = this.collectFiles(root);
-    return allFiles.find(
-      (f) => f.extension === "base" && f.name === "Book Catalog.base"
-    ) ?? null;
+    return this.collectFiles(this.app.vault.getRoot())
+      .find((f) => f.extension === "base" && f.name === "Book Catalog.base") ?? null;
   }
-
-  // ─── Create or update Base file ───────────────────────────────────────────
 
   async createBaseFile(): Promise<void> {
     await this.ensureFolder(this.settings.baseFolder);
     const basePath = getBasePath(this.settings.baseFolder);
     const content = generateBaseContent(this.settings);
     const existing = this.app.vault.getAbstractFileByPath(basePath);
-    if (existing instanceof TFile) {
-      await this.app.vault.modify(existing, content);
-      new Notice("✅ Book Catalog.base updated.");
-    } else {
-      await this.app.vault.create(basePath, content);
-      new Notice("✅ Book Catalog.base created.");
-    }
+    if (existing instanceof TFile) { await this.app.vault.modify(existing, content); new Notice("✅ Book Catalog.base updated."); }
+    else { await this.app.vault.create(basePath, content); new Notice("✅ Book Catalog.base created."); }
   }
-
-  // ─── Reorganize files ─────────────────────────────────────────────────────
 
   async reorganizeFiles(bookNotes: TFile[]): Promise<void> {
     const newNotesFolder = getNotesFolder(this.settings);
     const newBasePath = getBasePath(this.settings.baseFolder);
-
     await this.ensureFolder(this.settings.baseFolder);
-    if (this.settings.notesSubfolder.trim()) {
-      await this.ensureFolder(newNotesFolder);
-    }
-
+    if (this.settings.notesSubfolder.trim()) await this.ensureFolder(newNotesFolder);
     let moved = 0;
-
     for (const file of bookNotes) {
       const newPath = `${newNotesFolder}/${file.name}`;
-      if (file.path !== newPath) {
-        await this.app.vault.rename(file, newPath);
-        moved++;
-      }
+      if (file.path !== newPath) { await this.app.vault.rename(file, newPath); moved++; }
     }
-
     const existingBase = this.findExistingBaseFile();
-    if (existingBase && existingBase.path !== newBasePath) {
-      await this.app.vault.rename(existingBase, newBasePath);
-    }
-
+    if (existingBase && existingBase.path !== newBasePath) await this.app.vault.rename(existingBase, newBasePath);
     await this.createBaseFile();
     await this.saveSettings();
-
-    new Notice(
-      `✅ Reorganization complete. ${moved} note${moved !== 1 ? "s" : ""} moved.`
-    );
+    new Notice(`✅ Reorganization complete. ${moved} note${moved !== 1 ? "s" : ""} moved.`);
   }
 
-  // ─── ISBN Lookup ──────────────────────────────────────────────────────────
+  // ─── ISBN Barcode Lookup ──────────────────────────────────────────────────
 
   async lookupISBN(isbn: string): Promise<BookData | null> {
     const cleanISBN = isbn.replace(/[^0-9X]/gi, "");
-    try {
-      const book = await this.fetchOpenLibrary(cleanISBN);
-      if (book) return book;
-    } catch (e) { console.warn("Open Library lookup failed:", e); }
-    try {
-      const book = await this.fetchGoogleBooks(cleanISBN);
-      if (book) return book;
-    } catch (e) { console.warn("Google Books lookup failed:", e); }
+    try { const b = await this.fetchOpenLibraryByISBN(cleanISBN); if (b) return b; } catch (e) { console.warn("Open Library ISBN lookup failed:", e); }
+    try { const b = await this.fetchGoogleBooksByISBN(cleanISBN); if (b) return b; } catch (e) { console.warn("Google Books ISBN lookup failed:", e); }
     return null;
   }
 
-  // ─── Open Library ─────────────────────────────────────────────────────────
-
-  async fetchOpenLibrary(isbn: string): Promise<BookData | null> {
+  async fetchOpenLibraryByISBN(isbn: string): Promise<BookData | null> {
     const url = `https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`;
     const response = await requestUrl({ url });
     const data = response.json;
@@ -301,11 +238,7 @@ export default class BookCatalogPlugin extends Plugin {
       isbn,
       title: toTitleCase(book.title || "Unknown Title"),
       authors: toTitleCaseNames((book.authors || []).map((a: any) => a.name)),
-      editors: toTitleCaseNames(
-        (book.contributions || [])
-          .filter((c: any) => c.role?.toLowerCase().includes("editor"))
-          .map((c: any) => c.name)
-      ),
+      editors: toTitleCaseNames((book.contributions || []).filter((c: any) => c.role?.toLowerCase().includes("editor")).map((c: any) => c.name)),
       publisher: book.publishers?.[0]?.name || "",
       publishedYear: book.publish_date ? book.publish_date.split(" ").pop() : "",
       coverUrl: book.cover?.large || book.cover?.medium || "",
@@ -315,14 +248,12 @@ export default class BookCatalogPlugin extends Plugin {
     };
   }
 
-  // ─── Google Books ──────────────────────────────────────────────────────────
-
-  async fetchGoogleBooks(isbn: string): Promise<BookData | null> {
+  async fetchGoogleBooksByISBN(isbn: string): Promise<BookData | null> {
     let url = `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`;
     if (this.settings.googleBooksApiKey) url += `&key=${this.settings.googleBooksApiKey}`;
     const response = await requestUrl({ url });
     const data = response.json;
-    if (!data.items || data.items.length === 0) return null;
+    if (!data.items?.length) return null;
     const info = data.items[0].volumeInfo;
     return {
       isbn,
@@ -331,17 +262,91 @@ export default class BookCatalogPlugin extends Plugin {
       editors: [],
       publisher: info.publisher || "",
       publishedYear: info.publishedDate ? info.publishedDate.substring(0, 4) : "",
-      coverUrl:
-        info.imageLinks?.extraLarge ||
-        info.imageLinks?.large ||
-        info.imageLinks?.thumbnail || "",
+      coverUrl: info.imageLinks?.extraLarge || info.imageLinks?.large || info.imageLinks?.thumbnail || "",
       description: info.description || "",
       pages: info.pageCount?.toString() || "",
       subjects: (info.categories || []).slice(0, 8),
     };
   }
 
-  // ─── Duplicate Check ──────────────────────────────────────────────────────
+  // ─── Manual Title/Author Search ───────────────────────────────────────────
+  // Queries Open Library search, falls back to Google Books search.
+  // Returns up to 10 combined results deduplicated by normalized title+author.
+
+  async searchBooks(title: string, author: string): Promise<BookData[]> {
+    const results: BookData[] = [];
+    const seen = new Set<string>();
+
+    const dedupeKey = (b: BookData) =>
+      `${b.title.toLowerCase().trim()}|${(b.authors[0] || "").toLowerCase().trim()}`;
+
+    const addResult = (b: BookData) => {
+      const key = dedupeKey(b);
+      if (!seen.has(key)) { seen.add(key); results.push(b); }
+    };
+
+    // Open Library search
+    try {
+      const olResults = await this.searchOpenLibrary(title, author);
+      olResults.forEach(addResult);
+    } catch (e) { console.warn("Open Library search failed:", e); }
+
+    // Google Books search (fills gaps)
+    try {
+      const gbResults = await this.searchGoogleBooks(title, author);
+      gbResults.forEach(addResult);
+    } catch (e) { console.warn("Google Books search failed:", e); }
+
+    return results.slice(0, 10);
+  }
+
+  async searchOpenLibrary(title: string, author: string): Promise<BookData[]> {
+    let url = `https://openlibrary.org/search.json?title=${encodeURIComponent(title)}`;
+    if (author) url += `&author=${encodeURIComponent(author)}`;
+    url += `&limit=8&fields=title,author_name,publisher,first_publish_year,isbn,cover_i,subject`;
+    const response = await requestUrl({ url });
+    const data = response.json;
+    return (data.docs || []).map((doc: any): BookData => ({
+      isbn: doc.isbn?.[0] || "",
+      title: toTitleCase(doc.title || "Unknown Title"),
+      authors: toTitleCaseNames(doc.author_name || []),
+      editors: [],
+      publisher: doc.publisher?.[0] || "",
+      publishedYear: doc.first_publish_year?.toString() || "",
+      coverUrl: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` : "",
+      description: "",
+      pages: "",
+      subjects: (doc.subject || []).slice(0, 8),
+    }));
+  }
+
+  async searchGoogleBooks(title: string, author: string): Promise<BookData[]> {
+    let q = `intitle:${encodeURIComponent(title)}`;
+    if (author) q += `+inauthor:${encodeURIComponent(author)}`;
+    let url = `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=8`;
+    if (this.settings.googleBooksApiKey) url += `&key=${this.settings.googleBooksApiKey}`;
+    const response = await requestUrl({ url });
+    const data = response.json;
+    return (data.items || []).map((item: any): BookData => {
+      const info = item.volumeInfo;
+      const isbn = info.industryIdentifiers?.find((id: any) => id.type === "ISBN_13")?.identifier
+        || info.industryIdentifiers?.find((id: any) => id.type === "ISBN_10")?.identifier || "";
+      return {
+        isbn,
+        title: toTitleCase(info.title || "Unknown Title"),
+        authors: toTitleCaseNames(info.authors || []),
+        editors: [],
+        publisher: info.publisher || "",
+        publishedYear: info.publishedDate ? info.publishedDate.substring(0, 4) : "",
+        coverUrl: info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || "",
+        description: info.description || "",
+        pages: info.pageCount?.toString() || "",
+        subjects: (info.categories || []).slice(0, 8),
+      };
+    });
+  }
+
+  // ─── Note Utilities ───────────────────────────────────────────────────────
 
   findExistingNote(book: BookData): TFile | null {
     const folder = getNotesFolder(this.settings);
@@ -350,41 +355,30 @@ export default class BookCatalogPlugin extends Plugin {
     return file instanceof TFile ? file : null;
   }
 
-  // ─── Note Creation ─────────────────────────────────────────────────────────
-
-  async createBookNote(
-    book: BookData,
-    condition: string,
-    acquired: string,
-    valuation: string
-  ): Promise<void> {
+  async createBookNote(book: BookData, condition: string, acquired: string, valuation: string, copies: string): Promise<void> {
     const notesFolder = getNotesFolder(this.settings);
     await this.ensureFolder(this.settings.baseFolder);
     if (this.settings.notesSubfolder.trim()) await this.ensureFolder(notesFolder);
     const safeTitle = book.title.replace(/[\\/:*?"<>|]/g, "").trim();
-    const content = this.generateNoteContent(book, condition, acquired, valuation);
-    await this.app.vault.create(`${notesFolder}/${safeTitle}.md`, content);
+    await this.app.vault.create(`${notesFolder}/${safeTitle}.md`, this.generateNoteContent(book, condition, acquired, valuation, copies));
     new Notice(`✅ Book added: ${book.title}`);
   }
 
-  openNote(file: TFile): void {
-    this.app.workspace.getLeaf(false).openFile(file);
+  async updateCopies(file: TFile, newCount: number): Promise<void> {
+    const content = await this.app.vault.read(file);
+    const updated = /^copies:\s*\d+/m.test(content)
+      ? content.replace(/^copies:\s*\d+/m, `copies: ${newCount}`)
+      : content.replace(/^(---[\s\S]*?)\n---/m, `$1\ncopies: ${newCount}\n---`);
+    await this.app.vault.modify(file, updated);
+    new Notice(`✅ Copies updated to ${newCount}.`);
   }
 
-  // ─── Note Template ─────────────────────────────────────────────────────────
+  openNote(file: TFile): void { this.app.workspace.getLeaf(false).openFile(file); }
 
-  generateNoteContent(
-    book: BookData,
-    condition: string,
-    acquired: string,
-    valuation: string
-  ): string {
-    const coverLine = book.coverUrl
-      ? `\n<img src="${book.coverUrl}" alt="cover" width="150"/>\n`
-      : "";
-    const valuationYaml = valuation
-      ? parseFloat(valuation) || `"${valuation}"`
-      : '""';
+  generateNoteContent(book: BookData, condition: string, acquired: string, valuation: string, copies: string): string {
+    const coverLine = book.coverUrl ? `\n<img src="${book.coverUrl}" alt="cover" width="150"/>\n` : "";
+    const valuationYaml = valuation ? parseFloat(valuation) || `"${valuation}"` : '""';
+    const copiesYaml = copies ? parseInt(copies) || 1 : 1;
     return `---
 title: "${book.title.replace(/"/g, '\\"')}"
 authors: ${toYamlInline(book.authors)}
@@ -397,6 +391,7 @@ cover: "${book.coverUrl}"
 condition: "${condition}"
 acquired: "${acquired}"
 valuation: ${valuationYaml}
+copies: ${copiesYaml}
 subjects: ${toYamlInline(book.subjects)}
 tags: ["book"]
 ---
@@ -411,223 +406,102 @@ ${coverLine}
 
 class ReorganizeModal extends Modal {
   plugin: BookCatalogPlugin;
-
-  constructor(app: App, plugin: BookCatalogPlugin) {
-    super(app);
-    this.plugin = plugin;
-  }
-
+  constructor(app: App, plugin: BookCatalogPlugin) { super(app); this.plugin = plugin; }
   onOpen() { this.showScanStep(); }
 
   showScanStep() {
     const { contentEl } = this;
     contentEl.empty();
-
     contentEl.createEl("h2", { text: "Reorganize Catalog Files" });
-    contentEl.createEl("p", {
-      text: "Scan your vault to find all book notes regardless of where they currently live. This ensures nothing gets missed even if files were moved manually.",
-    }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin-bottom:1.25rem;";
-
+    contentEl.createEl("p", { text: "Scan your vault to find all book notes regardless of where they currently live." }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin-bottom:1.25rem;";
     const targetEl = contentEl.createDiv();
-    targetEl.style.cssText =
-      "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; margin-bottom:1.25rem; font-size:0.85rem;";
-    targetEl.createEl("p", { text: "Target location (from your settings):" }).style.cssText =
-      "font-weight:600; margin:0 0 0.4rem;";
-    targetEl.createEl("p", {
-      text: `📄 ${getBasePath(this.plugin.settings.baseFolder)}`,
-    }).style.cssText = "margin:0 0 0.2rem; color:var(--text-muted);";
-    targetEl.createEl("p", {
-      text: `📚 ${getNotesFolder(this.plugin.settings)}/`,
-    }).style.cssText = "margin:0; color:var(--text-muted);";
-
+    targetEl.style.cssText = "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; margin-bottom:1.25rem; font-size:0.85rem;";
+    targetEl.createEl("p", { text: "Target location (from your settings):" }).style.cssText = "font-weight:600; margin:0 0 0.4rem;";
+    targetEl.createEl("p", { text: `📄 ${getBasePath(this.plugin.settings.baseFolder)}` }).style.cssText = "margin:0 0 0.2rem; color:var(--text-muted);";
+    targetEl.createEl("p", { text: `📚 ${getNotesFolder(this.plugin.settings)}/` }).style.cssText = "margin:0; color:var(--text-muted);";
     const resultsEl = contentEl.createDiv();
     resultsEl.style.cssText = "min-height:2rem; margin-bottom:1rem;";
-
     const btnRow = contentEl.createDiv();
     btnRow.style.cssText = "display:flex; gap:0.75rem;";
-
     const cancelBtn = btnRow.createEl("button", { text: "Cancel" });
     cancelBtn.style.cssText = "flex:1; padding:0.5rem;";
-
     const scanBtn = btnRow.createEl("button", { text: "🔍  Scan Vault" });
-    scanBtn.style.cssText =
-      "flex:1; padding:0.5rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
-
+    scanBtn.style.cssText = "flex:1; padding:0.5rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
     cancelBtn.addEventListener("click", () => this.close());
-
     scanBtn.addEventListener("click", () => {
-      scanBtn.disabled = true;
-      scanBtn.setText("Scanning...");
-      resultsEl.empty();
-
+      scanBtn.disabled = true; scanBtn.setText("Scanning..."); resultsEl.empty();
       const bookNotes = this.plugin.scanVaultForBookNotes();
       const newNotesFolder = getNotesFolder(this.plugin.settings);
       const notesToMove = bookNotes.filter((f) => f.path !== `${newNotesFolder}/${f.name}`);
       const existingBase = this.plugin.findExistingBaseFile();
       const newBasePath = getBasePath(this.plugin.settings.baseFolder);
       const baseNeedsMove = !!(existingBase && existingBase.path !== newBasePath);
-
       const resultBox = resultsEl.createDiv();
-      resultBox.style.cssText =
-        "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; font-size:0.85rem;";
-
-      resultBox.createEl("p", {
-        text: `✅ Scan complete — found ${bookNotes.length} book note${bookNotes.length !== 1 ? "s" : ""} in your vault.`,
-      }).style.cssText = "font-weight:600; margin:0 0 0.5rem;";
-
+      resultBox.style.cssText = "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; font-size:0.85rem;";
+      resultBox.createEl("p", { text: `✅ Scan complete — found ${bookNotes.length} book note${bookNotes.length !== 1 ? "s" : ""} in your vault.` }).style.cssText = "font-weight:600; margin:0 0 0.5rem;";
       if (bookNotes.length === 0) {
-        resultBox.createEl("p", {
-          text: 'No book notes found. Make sure your notes have tags: ["book"] in their frontmatter.',
-        }).style.cssText = "color:var(--text-muted); margin:0;";
-        scanBtn.disabled = false;
-        scanBtn.setText("🔍  Scan Vault");
-        return;
+        resultBox.createEl("p", { text: 'No book notes found. Make sure your notes have tags: ["book"] in their frontmatter.' }).style.cssText = "color:var(--text-muted); margin:0;";
+        scanBtn.disabled = false; scanBtn.setText("🔍  Scan Vault"); return;
       }
-
-      // Group notes by current folder
       const byFolder = new Map<string, TFile[]>();
-      for (const f of bookNotes) {
-        const folder = f.parent?.path ?? "(root)";
-        if (!byFolder.has(folder)) byFolder.set(folder, []);
-        byFolder.get(folder)!.push(f);
-      }
-
+      for (const f of bookNotes) { const folder = f.parent?.path ?? "(root)"; if (!byFolder.has(folder)) byFolder.set(folder, []); byFolder.get(folder)!.push(f); }
       byFolder.forEach((files, folder) => {
         const alreadyInPlace = folder === newNotesFolder;
-        const folderEl = resultBox.createDiv();
-        folderEl.style.cssText = "margin-bottom:0.3rem;";
-        folderEl.createEl("span", {
-          text: `📁 ${folder}/ — ${files.length} note${files.length !== 1 ? "s" : ""}`,
-        }).style.cssText = alreadyInPlace
-          ? "color:var(--color-green); font-weight:500;"
-          : "color:var(--text-muted);";
-        if (alreadyInPlace) {
-          folderEl.createEl("span", { text: " ✓ already in target" }).style.cssText =
-            "color:var(--color-green); font-size:0.8rem;";
-        }
+        const folderEl = resultBox.createDiv(); folderEl.style.cssText = "margin-bottom:0.3rem;";
+        folderEl.createEl("span", { text: `📁 ${folder}/ — ${files.length} note${files.length !== 1 ? "s" : ""}` }).style.cssText = alreadyInPlace ? "color:var(--color-green); font-weight:500;" : "color:var(--text-muted);";
+        if (alreadyInPlace) folderEl.createEl("span", { text: " ✓ already in target" }).style.cssText = "color:var(--color-green); font-size:0.8rem;";
       });
-
-      if (existingBase) {
-        resultBox.createEl("p", {
-          text: `📄 Book Catalog.base: ${existingBase.path}`,
-        }).style.cssText = "margin:0.5rem 0 0; color:var(--text-muted);";
-      } else {
-        resultBox.createEl("p", {
-          text: "📄 No Book Catalog.base found — it will be created.",
-        }).style.cssText = "margin:0.5rem 0 0; color:var(--text-muted);";
-      }
-
+      if (existingBase) resultBox.createEl("p", { text: `📄 Book Catalog.base: ${existingBase.path}` }).style.cssText = "margin:0.5rem 0 0; color:var(--text-muted);";
       if (notesToMove.length === 0 && !baseNeedsMove) {
-        resultBox.createEl("p", {
-          text: "✅ Everything is already in the correct location.",
-        }).style.cssText = "margin:0.75rem 0 0; font-weight:600; color:var(--color-green);";
-        scanBtn.disabled = false;
-        scanBtn.setText("🔍  Scan Again");
-        return;
+        resultBox.createEl("p", { text: "✅ Everything is already in the correct location." }).style.cssText = "margin:0.75rem 0 0; font-weight:600; color:var(--color-green);";
+        scanBtn.disabled = false; scanBtn.setText("🔍  Scan Again"); return;
       }
-
-      const proceedRow = resultsEl.createDiv();
-      proceedRow.style.cssText = "display:flex; justify-content:flex-end; margin-top:0.75rem;";
-      const proceedBtn = proceedRow.createEl("button", {
-        text: `Review ${notesToMove.length} move${notesToMove.length !== 1 ? "s" : ""} →`,
-      });
-      proceedBtn.style.cssText =
-        "padding:0.4rem 1rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
-      proceedBtn.addEventListener("click", () => {
-        this.showConfirmStep(bookNotes, notesToMove, existingBase, baseNeedsMove);
-      });
-
-      scanBtn.disabled = false;
-      scanBtn.setText("🔍  Scan Again");
+      const proceedRow = resultsEl.createDiv(); proceedRow.style.cssText = "display:flex; justify-content:flex-end; margin-top:0.75rem;";
+      const proceedBtn = proceedRow.createEl("button", { text: `Review ${notesToMove.length} move${notesToMove.length !== 1 ? "s" : ""} →` });
+      proceedBtn.style.cssText = "padding:0.4rem 1rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
+      proceedBtn.addEventListener("click", () => this.showConfirmStep(bookNotes, notesToMove, existingBase, baseNeedsMove));
+      scanBtn.disabled = false; scanBtn.setText("🔍  Scan Again");
     });
   }
 
-  showConfirmStep(
-    allNotes: TFile[],
-    notesToMove: TFile[],
-    existingBase: TFile | null,
-    baseNeedsMove: boolean
-  ) {
-    const { contentEl } = this;
-    contentEl.empty();
-
+  showConfirmStep(allNotes: TFile[], notesToMove: TFile[], existingBase: TFile | null, baseNeedsMove: boolean) {
+    const { contentEl } = this; contentEl.empty();
     const s = this.plugin.settings;
     const newNotesFolder = getNotesFolder(s);
     const newBasePath = getBasePath(s.baseFolder);
-
     contentEl.createEl("h2", { text: "Confirm Reorganization" });
-    contentEl.createEl("p", {
-      text: "Review the changes below before confirming.",
-    }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;";
-
-    const treeStyle =
-      "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; font-family:monospace; font-size:0.82rem; margin-bottom:0.75rem; line-height:1.8;";
-
+    contentEl.createEl("p", { text: "Review the changes below before confirming." }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;";
+    const treeStyle = "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; font-family:monospace; font-size:0.82rem; margin-bottom:0.75rem; line-height:1.8;";
     if (notesToMove.length > 0) {
-      contentEl.createEl("p", { text: "Book notes to move:" }).style.cssText =
-        "font-weight:600; margin-bottom:0.25rem;";
-      const notesBox = contentEl.createDiv();
-      notesBox.style.cssText = treeStyle;
-
+      contentEl.createEl("p", { text: "Book notes to move:" }).style.cssText = "font-weight:600; margin-bottom:0.25rem;";
+      const notesBox = contentEl.createDiv(); notesBox.style.cssText = treeStyle;
       const byFolder = new Map<string, TFile[]>();
-      for (const f of notesToMove) {
-        const folder = f.parent?.path ?? "(root)";
-        if (!byFolder.has(folder)) byFolder.set(folder, []);
-        byFolder.get(folder)!.push(f);
-      }
-
+      for (const f of notesToMove) { const folder = f.parent?.path ?? "(root)"; if (!byFolder.has(folder)) byFolder.set(folder, []); byFolder.get(folder)!.push(f); }
       byFolder.forEach((files, folder) => {
         notesBox.createEl("div", { text: `📁 ${folder}/` });
-        const indent = notesBox.createDiv();
-        indent.style.cssText = "padding-left:1.2rem;";
-        files.slice(0, 4).forEach((f) => {
-          indent.createEl("div", { text: `📝 ${f.name}` }).style.cssText = "color:var(--text-muted);";
-        });
-        if (files.length > 4)
-          indent.createEl("div", { text: `… and ${files.length - 4} more` }).style.cssText = "color:var(--text-muted);";
-        notesBox.createEl("div", { text: `↳ → ${newNotesFolder}/` }).style.cssText =
-          "padding-left:1.2rem; color:var(--color-green);";
+        const indent = notesBox.createDiv(); indent.style.cssText = "padding-left:1.2rem;";
+        files.slice(0, 4).forEach((f) => indent.createEl("div", { text: `📝 ${f.name}` }).style.cssText = "color:var(--text-muted);");
+        if (files.length > 4) indent.createEl("div", { text: `… and ${files.length - 4} more` }).style.cssText = "color:var(--text-muted);";
+        notesBox.createEl("div", { text: `↳ → ${newNotesFolder}/` }).style.cssText = "padding-left:1.2rem; color:var(--color-green);";
       });
     }
-
     if (baseNeedsMove && existingBase) {
-      contentEl.createEl("p", { text: "Base file to move:" }).style.cssText =
-        "font-weight:600; margin-bottom:0.25rem;";
-      const baseBox = contentEl.createDiv();
-      baseBox.style.cssText = treeStyle;
+      contentEl.createEl("p", { text: "Base file to move:" }).style.cssText = "font-weight:600; margin-bottom:0.25rem;";
+      const baseBox = contentEl.createDiv(); baseBox.style.cssText = treeStyle;
       baseBox.createEl("div", { text: `📄 ${existingBase.path}` }).style.cssText = "color:var(--text-muted);";
       baseBox.createEl("div", { text: `↳ → ${newBasePath}` }).style.cssText = "color:var(--color-green);";
     }
-
     const summaryEl = contentEl.createDiv();
-    summaryEl.style.cssText =
-      "background:var(--background-modifier-border); border-radius:6px; padding:0.6rem 0.9rem; margin-bottom:1.25rem; font-size:0.85rem;";
-    summaryEl.createEl("p", {
-      text: `📚 ${notesToMove.length} note${notesToMove.length !== 1 ? "s" : ""} → ${newNotesFolder}/`,
-    }).style.cssText = "margin:0 0 0.2rem;";
-    if (baseNeedsMove)
-      summaryEl.createEl("p", { text: `📄 Base → ${newBasePath}` }).style.cssText = "margin:0 0 0.2rem;";
-    summaryEl.createEl("p", {
-      text: "📄 Book Catalog.base will be regenerated with updated paths.",
-    }).style.cssText = "margin:0;";
-
-    const btnRow = contentEl.createDiv();
-    btnRow.style.cssText = "display:flex; gap:0.75rem; justify-content:flex-end;";
-
-    const backBtn = btnRow.createEl("button", { text: "← Back" });
-    backBtn.style.cssText = "padding:0.4rem 1rem;";
-
+    summaryEl.style.cssText = "background:var(--background-modifier-border); border-radius:6px; padding:0.6rem 0.9rem; margin-bottom:1.25rem; font-size:0.85rem;";
+    summaryEl.createEl("p", { text: `📚 ${notesToMove.length} note${notesToMove.length !== 1 ? "s" : ""} → ${newNotesFolder}/` }).style.cssText = "margin:0 0 0.2rem;";
+    if (baseNeedsMove) summaryEl.createEl("p", { text: `📄 Base → ${newBasePath}` }).style.cssText = "margin:0 0 0.2rem;";
+    summaryEl.createEl("p", { text: "📄 Book Catalog.base will be regenerated with updated paths." }).style.cssText = "margin:0;";
+    const btnRow = contentEl.createDiv(); btnRow.style.cssText = "display:flex; gap:0.75rem; justify-content:flex-end;";
+    const backBtn = btnRow.createEl("button", { text: "← Back" }); backBtn.style.cssText = "padding:0.4rem 1rem;";
     const confirmBtn = btnRow.createEl("button", { text: "Confirm & Move Files" });
-    confirmBtn.style.cssText =
-      "background:var(--interactive-accent); color:var(--text-on-accent); padding:0.4rem 1rem; border-radius:4px;";
-
+    confirmBtn.style.cssText = "background:var(--interactive-accent); color:var(--text-on-accent); padding:0.4rem 1rem; border-radius:4px;";
     backBtn.addEventListener("click", () => this.showScanStep());
-    confirmBtn.addEventListener("click", async () => {
-      confirmBtn.disabled = true;
-      confirmBtn.setText("Moving files...");
-      await this.plugin.reorganizeFiles(allNotes);
-      this.close();
-    });
+    confirmBtn.addEventListener("click", async () => { confirmBtn.disabled = true; confirmBtn.setText("Moving files..."); await this.plugin.reorganizeFiles(allNotes); this.close(); });
   }
 
   onClose() { this.contentEl.empty(); }
@@ -637,176 +511,215 @@ class ReorganizeModal extends Modal {
 
 class ISBNModal extends Modal {
   plugin: BookCatalogPlugin;
-
-  constructor(app: App, plugin: BookCatalogPlugin) {
-    super(app);
-    this.plugin = plugin;
-  }
-
+  constructor(app: App, plugin: BookCatalogPlugin) { super(app); this.plugin = plugin; }
   onOpen() { this.showScanStep(); }
 
   showScanStep() {
     const { contentEl } = this;
     contentEl.empty();
 
-    contentEl.createEl("h2", { text: "Add Book by ISBN" });
-    contentEl.createEl("p", {
-      text: "Scan the barcode with a USB scanner, or type the ISBN manually.",
-    }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin:0 0 0.75rem;";
+    contentEl.createEl("h2", { text: "Add Book" });
 
-    const inputEl = contentEl.createEl("input", { type: "text", placeholder: "ISBN / UPC..." });
-    inputEl.style.cssText = "width:100%; margin-bottom:0.75rem; font-size:1.1rem; padding:0.5rem;";
-    inputEl.focus();
+    // ── Tab bar ───────────────────────────────────────────────────────────
+    const tabBar = contentEl.createDiv();
+    tabBar.style.cssText = "display:flex; gap:0.5rem; margin-bottom:1.25rem;";
 
-    const statusEl = contentEl.createEl("p", { text: "" });
-    statusEl.style.cssText = "color:var(--text-muted); min-height:1.5rem; margin:0 0 0.75rem;";
+    const barcodeBtn = tabBar.createEl("button", { text: "📷  Scan / ISBN" });
+    const searchBtn = tabBar.createEl("button", { text: "🔍  Search by Title" });
+    const activeStyle = "flex:1; padding:0.4rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px; font-weight:500; cursor:pointer;";
+    const inactiveStyle = "flex:1; padding:0.4rem; background:var(--background-secondary); border-radius:4px; cursor:pointer;";
 
-    const lookupBtn = contentEl.createEl("button", { text: "Look Up Book" });
-    lookupBtn.style.cssText = "width:100%; padding:0.5rem;";
+    const tabContent = contentEl.createDiv();
 
-    const doLookup = async (isbn: string) => {
-      if (!isbn) { statusEl.setText("Please enter an ISBN."); return; }
-      lookupBtn.disabled = true;
-      inputEl.disabled = true;
-      statusEl.setText("Looking up book...");
-      const book = await this.plugin.lookupISBN(isbn);
-      if (!book) {
-        statusEl.setText("❌ No book found. Check the number and try again.");
-        lookupBtn.disabled = false;
-        inputEl.disabled = false;
-        inputEl.focus();
-        return;
-      }
-      const existing = this.plugin.findExistingNote(book);
-      if (existing) { this.showDuplicateStep(book, existing); return; }
-      this.showConfirmStep(book);
+    const renderBarcodeTab = () => {
+      barcodeBtn.style.cssText = activeStyle;
+      searchBtn.style.cssText = inactiveStyle;
+      tabContent.empty();
+
+      tabContent.createEl("p", { text: "Scan the barcode with a USB scanner, or type the ISBN manually." }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin:0 0 0.75rem;";
+
+      const inputEl = tabContent.createEl("input", { type: "text", placeholder: "ISBN / barcode..." });
+      inputEl.style.cssText = "width:100%; margin-bottom:0.75rem; font-size:1.1rem; padding:0.5rem;";
+      inputEl.focus();
+
+      const statusEl = tabContent.createEl("p", { text: "" });
+      statusEl.style.cssText = "color:var(--text-muted); min-height:1.5rem; margin:0 0 0.75rem;";
+
+      const lookupBtn = tabContent.createEl("button", { text: "Look Up Book" });
+      lookupBtn.style.cssText = "width:100%; padding:0.5rem;";
+
+      const doLookup = async (isbn: string) => {
+        if (!isbn) { statusEl.setText("Please enter an ISBN."); return; }
+        lookupBtn.disabled = true; inputEl.disabled = true; statusEl.setText("Looking up book...");
+        const book = await this.plugin.lookupISBN(isbn);
+        if (!book) {
+          statusEl.setText("❌ No book found. Check the number and try again.");
+          lookupBtn.disabled = false; inputEl.disabled = false; inputEl.focus(); return;
+        }
+        const existing = this.plugin.findExistingNote(book);
+        if (existing) { this.showDuplicateStep(book, existing); return; }
+        this.showConfirmStep(book);
+      };
+
+      inputEl.addEventListener("keydown", (e) => { if (e.key === "Enter") doLookup(inputEl.value.trim()); });
+      lookupBtn.addEventListener("click", () => doLookup(inputEl.value.trim()));
     };
 
-    inputEl.addEventListener("keydown", (e) => { if (e.key === "Enter") doLookup(inputEl.value.trim()); });
-    lookupBtn.addEventListener("click", () => doLookup(inputEl.value.trim()));
+    const renderSearchTab = () => {
+      barcodeBtn.style.cssText = inactiveStyle;
+      searchBtn.style.cssText = activeStyle;
+      tabContent.empty();
+
+      tabContent.createEl("p", { text: "Search by title and optionally author. Title is required." }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin:0 0 0.75rem;";
+
+      const rowStyle = "display:flex; align-items:center; gap:0.75rem; margin-bottom:0.6rem;";
+      const labelStyle = "min-width:60px; font-weight:500; font-size:0.9rem;";
+
+      const titleWrap = tabContent.createDiv(); titleWrap.style.cssText = rowStyle;
+      titleWrap.createEl("label", { text: "Title *" }).style.cssText = labelStyle;
+      const titleEl = titleWrap.createEl("input", { type: "text", placeholder: "Required" });
+      titleEl.style.cssText = "flex:1; padding:0.35rem;";
+      titleEl.focus();
+
+      const authorWrap = tabContent.createDiv(); authorWrap.style.cssText = rowStyle + " margin-bottom:0.9rem;";
+      authorWrap.createEl("label", { text: "Author" }).style.cssText = labelStyle;
+      const authorEl = authorWrap.createEl("input", { type: "text", placeholder: "Optional" });
+      authorEl.style.cssText = "flex:1; padding:0.35rem;";
+
+      const statusEl = tabContent.createEl("p", { text: "" });
+      statusEl.style.cssText = "color:var(--text-muted); min-height:1.2rem; margin:0 0 0.5rem; font-size:0.85rem;";
+
+      const searchActionBtn = tabContent.createEl("button", { text: "Search Books" });
+      searchActionBtn.style.cssText = "width:100%; padding:0.5rem; margin-bottom:0.75rem;";
+
+      // Results container — appears inline below the search form
+      const resultsEl = tabContent.createDiv();
+
+      const renderResults = (books: BookData[]) => {
+        resultsEl.empty();
+        if (books.length === 0) {
+          resultsEl.createEl("p", { text: "No results found. Try different search terms." }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
+          return;
+        }
+
+        resultsEl.createEl("p", { text: `${books.length} result${books.length !== 1 ? "s" : ""} — click to select` }).style.cssText = "font-size:0.8rem; color:var(--text-muted); margin-bottom:0.5rem;";
+
+        books.forEach((book) => {
+          const card = resultsEl.createDiv();
+          card.style.cssText = "display:flex; gap:0.65rem; padding:0.6rem; border-radius:6px; border:1px solid var(--background-modifier-border); margin-bottom:0.4rem; cursor:pointer; align-items:flex-start;";
+
+          if (book.coverUrl) {
+            const img = card.createEl("img");
+            img.src = book.coverUrl; img.alt = "cover";
+            img.style.cssText = "width:40px; height:auto; border-radius:3px; flex-shrink:0;";
+          } else {
+            const ph = card.createDiv();
+            ph.style.cssText = "width:40px; height:54px; background:var(--background-secondary); border-radius:3px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:1.2rem;";
+            ph.createEl("span", { text: "📖" });
+          }
+
+          const info = card.createDiv(); info.style.cssText = "flex:1; min-width:0;";
+          info.createEl("div", { text: book.title }).style.cssText = "font-weight:600; font-size:0.9rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;";
+          if (book.authors.length > 0) info.createEl("div", { text: book.authors.join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.82rem;";
+          const meta = [book.publisher, book.publishedYear].filter(Boolean).join(", ");
+          if (meta) info.createEl("div", { text: meta }).style.cssText = "color:var(--text-muted); font-size:0.82rem;";
+
+          card.addEventListener("mouseenter", () => { card.style.background = "var(--background-secondary)"; });
+          card.addEventListener("mouseleave", () => { card.style.background = ""; });
+          card.addEventListener("click", () => {
+            const existing = this.plugin.findExistingNote(book);
+            if (existing) { this.showDuplicateStep(book, existing); return; }
+            this.showConfirmStep(book);
+          });
+        });
+      };
+
+      const doSearch = async () => {
+        const title = titleEl.value.trim();
+        if (!title) { statusEl.setText("Please enter a title."); statusEl.style.color = "var(--color-red)"; titleEl.focus(); return; }
+        statusEl.style.color = "var(--text-muted)";
+        searchActionBtn.disabled = true; searchActionBtn.setText("Searching...");
+        statusEl.setText("Searching…");
+        resultsEl.empty();
+        const books = await this.plugin.searchBooks(title, authorEl.value.trim());
+        statusEl.setText("");
+        searchActionBtn.disabled = false; searchActionBtn.setText("Search Books");
+        renderResults(books);
+      };
+
+      const onEnter = (e: KeyboardEvent) => { if (e.key === "Enter") doSearch(); };
+      titleEl.addEventListener("keydown", onEnter);
+      authorEl.addEventListener("keydown", onEnter);
+      searchActionBtn.addEventListener("click", doSearch);
+    };
+
+    barcodeBtn.addEventListener("click", renderBarcodeTab);
+    searchBtn.addEventListener("click", renderSearchTab);
+    renderBarcodeTab();
   }
 
   showDuplicateStep(book: BookData, existing: TFile) {
-    const { contentEl } = this;
-    contentEl.empty();
-
-    const headerEl = contentEl.createDiv();
-    headerEl.style.cssText = "display:flex; align-items:center; gap:0.5rem; margin-bottom:1rem;";
-    headerEl.createEl("span", { text: "⚠️" }).style.fontSize = "1.5rem";
+    const { contentEl } = this; contentEl.empty();
+    const headerEl = contentEl.createDiv(); headerEl.style.cssText = "display:flex; align-items:center; gap:0.5rem; margin-bottom:1rem;";
+    headerEl.createEl("span", { text: "📚" }).style.fontSize = "1.5rem";
     headerEl.createEl("h2", { text: "Already in your catalog" }).style.margin = "0";
-
-    const previewEl = contentEl.createDiv();
-    previewEl.style.cssText = "display:flex; gap:1rem; margin-bottom:1.25rem; align-items:flex-start;";
-
-    if (book.coverUrl) {
-      const imgEl = previewEl.createEl("img");
-      imgEl.src = book.coverUrl;
-      imgEl.alt = "cover";
-      imgEl.style.cssText = "width:80px; height:auto; border-radius:4px; flex-shrink:0;";
-    }
-
-    const metaEl = previewEl.createDiv();
-    metaEl.style.cssText = "display:flex; flex-direction:column; gap:0.2rem;";
+    const previewEl = contentEl.createDiv(); previewEl.style.cssText = "display:flex; gap:1rem; margin-bottom:1.25rem; align-items:flex-start;";
+    if (book.coverUrl) { const imgEl = previewEl.createEl("img"); imgEl.src = book.coverUrl; imgEl.alt = "cover"; imgEl.style.cssText = "width:80px; height:auto; border-radius:4px; flex-shrink:0;"; }
+    const metaEl = previewEl.createDiv(); metaEl.style.cssText = "display:flex; flex-direction:column; gap:0.2rem;";
     metaEl.createEl("strong", { text: book.title });
-    if (book.authors.length > 0)
-      metaEl.createEl("span", { text: book.authors.join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
-    if (book.publisher || book.publishedYear)
-      metaEl.createEl("span", { text: [book.publisher, book.publishedYear].filter(Boolean).join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
-
-    contentEl.createEl("p", { text: `A note already exists: "${existing.name}"` }).style.cssText =
-      "color:var(--text-muted); font-size:0.85rem; margin-bottom:1.25rem;";
+    if (book.authors.length > 0) metaEl.createEl("span", { text: book.authors.join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
+    if (book.publisher || book.publishedYear) metaEl.createEl("span", { text: [book.publisher, book.publishedYear].filter(Boolean).join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
+    const cache = this.plugin.app.metadataCache.getFileCache(existing);
+    const currentCopies: number = cache?.frontmatter?.copies ?? 1;
+    const copiesInfoEl = contentEl.createDiv();
+    copiesInfoEl.style.cssText = "background:var(--background-secondary); border-radius:6px; padding:0.65rem 0.9rem; margin-bottom:1.25rem; font-size:0.9rem;";
+    copiesInfoEl.createEl("span", { text: "Currently in catalog: " });
+    copiesInfoEl.createEl("strong", { text: `${currentCopies} cop${currentCopies === 1 ? "y" : "ies"}` });
     contentEl.createEl("hr").style.marginBottom = "1rem";
-
-    const btnCol = contentEl.createDiv();
-    btnCol.style.cssText = "display:flex; flex-direction:column; gap:0.6rem;";
-
-    const openBtn = btnCol.createEl("button", { text: "📖  Open Existing Note" });
-    openBtn.style.cssText = "width:100%; padding:0.5rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
-
-    const scanBtn = btnCol.createEl("button", { text: "↩  Scan Another Book" });
-    scanBtn.style.cssText = "width:100%; padding:0.5rem;";
-
+    const copiesWrap = contentEl.createDiv(); copiesWrap.style.cssText = "display:flex; align-items:center; gap:0.75rem; margin-bottom:1.25rem;";
+    copiesWrap.createEl("label", { text: "Update copies to" }).style.cssText = "min-width:110px; font-weight:500; font-size:0.9rem;";
+    const copiesEl = copiesWrap.createEl("input", { type: "number" }); copiesEl.value = String(currentCopies + 1); copiesEl.min = "1"; copiesEl.step = "1"; copiesEl.style.cssText = "flex:1; padding:0.35rem;";
+    const btnCol = contentEl.createDiv(); btnCol.style.cssText = "display:flex; flex-direction:column; gap:0.6rem;";
+    const updateBtn = btnCol.createEl("button", { text: "✅  Update Copies" }); updateBtn.style.cssText = "width:100%; padding:0.5rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
+    const openBtn = btnCol.createEl("button", { text: "📖  Open Existing Note" }); openBtn.style.cssText = "width:100%; padding:0.5rem;";
+    const scanBtn = btnCol.createEl("button", { text: "↩  Search Again" }); scanBtn.style.cssText = "width:100%; padding:0.5rem;";
+    updateBtn.addEventListener("click", async () => { const newCount = parseInt(copiesEl.value) || currentCopies + 1; updateBtn.disabled = true; updateBtn.setText("Saving..."); await this.plugin.updateCopies(existing, newCount); this.close(); });
     openBtn.addEventListener("click", () => { this.plugin.openNote(existing); this.close(); });
     scanBtn.addEventListener("click", () => this.showScanStep());
   }
 
   showConfirmStep(book: BookData) {
-    const { contentEl } = this;
-    contentEl.empty();
-
-    const previewEl = contentEl.createDiv();
-    previewEl.style.cssText = "display:flex; gap:1rem; margin-bottom:1.25rem; align-items:flex-start;";
-
-    if (book.coverUrl) {
-      const imgEl = previewEl.createEl("img");
-      imgEl.src = book.coverUrl;
-      imgEl.alt = "cover";
-      imgEl.style.cssText = "width:80px; height:auto; border-radius:4px; flex-shrink:0;";
-    }
-
-    const metaEl = previewEl.createDiv();
-    metaEl.style.cssText = "display:flex; flex-direction:column; gap:0.2rem;";
+    const { contentEl } = this; contentEl.empty();
+    const previewEl = contentEl.createDiv(); previewEl.style.cssText = "display:flex; gap:1rem; margin-bottom:1.25rem; align-items:flex-start;";
+    if (book.coverUrl) { const imgEl = previewEl.createEl("img"); imgEl.src = book.coverUrl; imgEl.alt = "cover"; imgEl.style.cssText = "width:80px; height:auto; border-radius:4px; flex-shrink:0;"; }
+    const metaEl = previewEl.createDiv(); metaEl.style.cssText = "display:flex; flex-direction:column; gap:0.2rem;";
     metaEl.createEl("strong", { text: book.title });
-    if (book.authors.length > 0)
-      metaEl.createEl("span", { text: book.authors.join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
-    if (book.publisher || book.publishedYear)
-      metaEl.createEl("span", { text: [book.publisher, book.publishedYear].filter(Boolean).join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
-    if (book.pages)
-      metaEl.createEl("span", { text: `${book.pages} pages` }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
-
+    if (book.authors.length > 0) metaEl.createEl("span", { text: book.authors.join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
+    if (book.publisher || book.publishedYear) metaEl.createEl("span", { text: [book.publisher, book.publishedYear].filter(Boolean).join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
+    if (book.pages) metaEl.createEl("span", { text: `${book.pages} pages` }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
     contentEl.createEl("hr").style.marginBottom = "1rem";
-
     const rowStyle = "display:flex; align-items:center; gap:0.75rem; margin-bottom:0.75rem;";
     const labelStyle = "min-width:80px; font-weight:500;";
-
-    const conditionWrap = contentEl.createDiv();
-    conditionWrap.style.cssText = rowStyle;
+    const conditionWrap = contentEl.createDiv(); conditionWrap.style.cssText = rowStyle;
     conditionWrap.createEl("label", { text: "Condition" }).style.cssText = labelStyle;
-    const conditionEl = conditionWrap.createEl("select");
-    conditionEl.style.cssText = "flex:1; padding:0.35rem;";
-    ["", "New", "Fine", "Very Good", "Good", "Fair", "Poor"].forEach((c) => {
-      const opt = conditionEl.createEl("option", { text: c || "— select —" });
-      opt.value = c;
-    });
-
-    const acquiredWrap = contentEl.createDiv();
-    acquiredWrap.style.cssText = rowStyle;
+    const conditionEl = conditionWrap.createEl("select"); conditionEl.style.cssText = "flex:1; padding:0.35rem;";
+    ["", "New", "Fine", "Very Good", "Good", "Fair", "Poor"].forEach((c) => { const opt = conditionEl.createEl("option", { text: c || "— select —" }); opt.value = c; });
+    const acquiredWrap = contentEl.createDiv(); acquiredWrap.style.cssText = rowStyle;
     acquiredWrap.createEl("label", { text: "Acquired" }).style.cssText = labelStyle;
-    const acquiredEl = acquiredWrap.createEl("input", { type: "date" });
-    acquiredEl.style.cssText = "flex:1; padding:0.35rem;";
-    acquiredEl.value = new Date().toISOString().split("T")[0];
-
-    const valuationWrap = contentEl.createDiv();
-    valuationWrap.style.cssText = rowStyle + " margin-bottom:1.25rem;";
+    const acquiredEl = acquiredWrap.createEl("input", { type: "date" }); acquiredEl.style.cssText = "flex:1; padding:0.35rem;"; acquiredEl.value = new Date().toISOString().split("T")[0];
+    const copiesWrap = contentEl.createDiv(); copiesWrap.style.cssText = rowStyle;
+    copiesWrap.createEl("label", { text: "Copies" }).style.cssText = labelStyle;
+    const copiesEl = copiesWrap.createEl("input", { type: "number" }); copiesEl.value = "1"; copiesEl.min = "1"; copiesEl.step = "1"; copiesEl.style.cssText = "flex:1; padding:0.35rem;";
+    const valuationWrap = contentEl.createDiv(); valuationWrap.style.cssText = rowStyle + " margin-bottom:1.25rem;";
     valuationWrap.createEl("label", { text: "Value (USD)" }).style.cssText = labelStyle;
-
-    const valuationPrefix = valuationWrap.createDiv();
-    valuationPrefix.style.cssText =
-      "display:flex; align-items:center; flex:1; border:1px solid var(--background-modifier-border); border-radius:4px; overflow:hidden;";
-    valuationPrefix.createEl("span", { text: "$" }).style.cssText =
-      "padding:0.35rem 0.5rem; background:var(--background-secondary); color:var(--text-muted); font-weight:500; border-right:1px solid var(--background-modifier-border);";
-
-    const valuationEl = valuationPrefix.createEl("input", { type: "number" });
-    valuationEl.placeholder = "0.00";
-    valuationEl.min = "0";
-    valuationEl.step = "0.01";
-    valuationEl.style.cssText = "flex:1; padding:0.35rem 0.5rem; border:none; background:transparent; outline:none;";
-
-    const btnRow = contentEl.createDiv();
-    btnRow.style.cssText = "display:flex; gap:0.75rem; justify-content:flex-end;";
-
+    const valuationPrefix = valuationWrap.createDiv(); valuationPrefix.style.cssText = "display:flex; align-items:center; flex:1; border:1px solid var(--background-modifier-border); border-radius:4px; overflow:hidden;";
+    valuationPrefix.createEl("span", { text: "$" }).style.cssText = "padding:0.35rem 0.5rem; background:var(--background-secondary); color:var(--text-muted); font-weight:500; border-right:1px solid var(--background-modifier-border);";
+    const valuationEl = valuationPrefix.createEl("input", { type: "number" }); valuationEl.placeholder = "0.00"; valuationEl.min = "0"; valuationEl.step = "0.01"; valuationEl.style.cssText = "flex:1; padding:0.35rem 0.5rem; border:none; background:transparent; outline:none;";
+    const btnRow = contentEl.createDiv(); btnRow.style.cssText = "display:flex; gap:0.75rem; justify-content:flex-end;";
     const backBtn = btnRow.createEl("button", { text: "← Back" });
-    const saveBtn = btnRow.createEl("button", { text: "Save Book" });
-    saveBtn.style.cssText =
-      "background:var(--interactive-accent); color:var(--text-on-accent); padding:0.4rem 1rem; border-radius:4px;";
-
+    const saveBtn = btnRow.createEl("button", { text: "Save Book" }); saveBtn.style.cssText = "background:var(--interactive-accent); color:var(--text-on-accent); padding:0.4rem 1rem; border-radius:4px;";
     backBtn.addEventListener("click", () => this.showScanStep());
-    saveBtn.addEventListener("click", async () => {
-      saveBtn.disabled = true;
-      saveBtn.setText("Saving...");
-      await this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value);
-      this.close();
-    });
+    saveBtn.addEventListener("click", async () => { saveBtn.disabled = true; saveBtn.setText("Saving..."); await this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value); this.close(); });
   }
 
   onClose() { this.contentEl.empty(); }
@@ -816,109 +729,27 @@ class ISBNModal extends Modal {
 
 class BookCatalogSettingTab extends PluginSettingTab {
   plugin: BookCatalogPlugin;
-
-  constructor(app: App, plugin: BookCatalogPlugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-  }
+  constructor(app: App, plugin: BookCatalogPlugin) { super(app, plugin); this.plugin = plugin; }
 
   display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-
+    const { containerEl } = this; containerEl.empty();
     containerEl.createEl("h2", { text: "Book Catalog Settings" });
-
     containerEl.createEl("h3", { text: "File Organization" });
-    containerEl.createEl("p", {
-      text: "Set where the catalog base file and book notes should live. After changing these, use Reorganize Files below to move existing files.",
-    }).style.cssText = "color:var(--text-muted); font-size:0.85rem; margin-bottom:0.75rem;";
-
-    new Setting(containerEl)
-      .setName("Catalog folder")
-      .setDesc("Folder where Book Catalog.base is created. Can be nested, e.g. '03 Resources/Books'.")
-      .addText((text) =>
-        text
-          .setPlaceholder("Books")
-          .setValue(this.plugin.settings.baseFolder)
-          .onChange(async (value) => {
-            this.plugin.settings.baseFolder = value.trim();
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Notes subfolder")
-      .setDesc("Subfolder inside the catalog folder for book notes. Leave blank to store notes directly in the catalog folder.")
-      .addText((text) =>
-        text
-          .setPlaceholder("Notes")
-          .setValue(this.plugin.settings.notesSubfolder)
-          .onChange(async (value) => {
-            this.plugin.settings.notesSubfolder = value.trim();
-            await this.plugin.saveSettings();
-          })
-      );
-
-    const previewEl = containerEl.createDiv();
-    previewEl.style.cssText =
-      "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; margin-bottom:1rem; font-size:0.85rem;";
-
-    const updatePreview = () => {
-      previewEl.empty();
-      previewEl.createEl("p", {
-        text: `📄 Base file: ${getBasePath(this.plugin.settings.baseFolder)}`,
-      }).style.cssText = "margin:0 0 0.25rem; color:var(--text-muted);";
-      previewEl.createEl("p", {
-        text: `📚 Book notes: ${getNotesFolder(this.plugin.settings)}/`,
-      }).style.cssText = "margin:0; color:var(--text-muted);";
-    };
-
+    containerEl.createEl("p", { text: "Set where the catalog base file and book notes should live. After changing these, use Reorganize Files below to move existing files." }).style.cssText = "color:var(--text-muted); font-size:0.85rem; margin-bottom:0.75rem;";
+    new Setting(containerEl).setName("Catalog folder").setDesc("Folder where Book Catalog.base is created. Can be nested, e.g. '03 Resources/Books'.").addText((text) => text.setPlaceholder("Books").setValue(this.plugin.settings.baseFolder).onChange(async (value) => { this.plugin.settings.baseFolder = value.trim(); await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName("Notes subfolder").setDesc("Subfolder inside the catalog folder for book notes. Leave blank to store notes directly in the catalog folder.").addText((text) => text.setPlaceholder("Notes").setValue(this.plugin.settings.notesSubfolder).onChange(async (value) => { this.plugin.settings.notesSubfolder = value.trim(); await this.plugin.saveSettings(); }));
+    const previewEl = containerEl.createDiv(); previewEl.style.cssText = "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; margin-bottom:1rem; font-size:0.85rem;";
+    const updatePreview = () => { previewEl.empty(); previewEl.createEl("p", { text: `📄 Base file: ${getBasePath(this.plugin.settings.baseFolder)}` }).style.cssText = "margin:0 0 0.25rem; color:var(--text-muted);"; previewEl.createEl("p", { text: `📚 Book notes: ${getNotesFolder(this.plugin.settings)}/` }).style.cssText = "margin:0; color:var(--text-muted);"; };
     updatePreview();
-
     const origSave = this.plugin.saveSettings.bind(this.plugin);
-    this.plugin.saveSettings = async () => {
-      await origSave();
-      updatePreview();
-    };
-
-    new Setting(containerEl)
-      .setName("Create or update base file")
-      .setDesc("Creates Book Catalog.base at the path shown above with the correct filters and column layout.")
-      .addButton((btn) =>
-        btn.setButtonText("Create Base File").setCta().onClick(async () => {
-          await this.plugin.createBaseFile();
-        })
-      );
-
+    this.plugin.saveSettings = async () => { await origSave(); updatePreview(); };
+    new Setting(containerEl).setName("Create or update base file").setDesc("Creates Book Catalog.base at the path shown above with the correct filters and column layout.").addButton((btn) => btn.setButtonText("Create Base File").setCta().onClick(async () => { await this.plugin.createBaseFile(); }));
     containerEl.createEl("hr").style.margin = "1.5rem 0";
     containerEl.createEl("h3", { text: "Reorganize Files" });
-    containerEl.createEl("p", {
-      text: "Move existing book notes and the base file to match your current folder settings. Scans your entire vault first so manually-moved files are always found.",
-    }).style.cssText = "color:var(--text-muted); font-size:0.85rem; margin-bottom:0.75rem;";
-
-    new Setting(containerEl)
-      .setName("Scan & reorganize")
-      .setDesc("Scans the entire vault, shows what was found and where, then lets you confirm before moving anything.")
-      .addButton((btn) =>
-        btn.setButtonText("Scan Vault & Reorganize").setWarning().onClick(() => {
-          new ReorganizeModal(this.app, this.plugin).open();
-        })
-      );
-
+    containerEl.createEl("p", { text: "Move existing book notes and the base file to match your current folder settings. Scans your entire vault first so manually-moved files are always found." }).style.cssText = "color:var(--text-muted); font-size:0.85rem; margin-bottom:0.75rem;";
+    new Setting(containerEl).setName("Scan & reorganize").setDesc("Scans the entire vault, shows what was found and where, then lets you confirm before moving anything.").addButton((btn) => btn.setButtonText("Scan Vault & Reorganize").setWarning().onClick(() => { new ReorganizeModal(this.app, this.plugin).open(); }));
     containerEl.createEl("hr").style.margin = "1.5rem 0";
     containerEl.createEl("h3", { text: "API" });
-
-    new Setting(containerEl)
-      .setName("Google Books API key")
-      .setDesc("Optional. Used as a fallback if Open Library returns no results. Get a free key at console.cloud.google.com.")
-      .addText((text) =>
-        text
-          .setPlaceholder("AIza...")
-          .setValue(this.plugin.settings.googleBooksApiKey)
-          .onChange(async (value) => {
-            this.plugin.settings.googleBooksApiKey = value;
-            await this.plugin.saveSettings();
-          })
-      );
+    new Setting(containerEl).setName("Google Books API key").setDesc("Optional. Used as a fallback if Open Library returns no results. Get a free key at console.cloud.google.com.").addText((text) => text.setPlaceholder("AIza...").setValue(this.plugin.settings.googleBooksApiKey).onChange(async (value) => { this.plugin.settings.googleBooksApiKey = value; await this.plugin.saveSettings(); }));
   }
 }
