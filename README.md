@@ -2,6 +2,8 @@
 
 An Obsidian plugin for cataloging your book collection. Scan ISBN barcodes or search by title and author to automatically pull metadata from Open Library and Google Books, then save a structured note for each book directly in your vault.
 
+![Book Catalog demo](demo.gif)
+
 ## Features
 
 - **Barcode scanning** — scan ISBN barcodes with a USB or Bluetooth barcode scanner; the code is captured instantly as if typed into the input field
