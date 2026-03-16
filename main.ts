@@ -25,10 +25,18 @@ interface BookData {
   subjects: string[];
 }
 
+interface CustomField {
+  id: string;
+  name: string;
+  type: "text" | "number" | "date" | "boolean";
+}
+
 interface BookCatalogSettings {
   baseFolder: string;
   notesSubfolder: string;
   googleBooksApiKey: string;
+  saveAndAddFirst: boolean;
+  customFields: CustomField[];
 }
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
@@ -37,6 +45,8 @@ const DEFAULT_SETTINGS: BookCatalogSettings = {
   baseFolder: "Books",
   notesSubfolder: "Notes",
   googleBooksApiKey: "",
+  saveAndAddFirst: true,
+  customFields: [],
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -45,6 +55,10 @@ function toYamlInline(items: string[]): string {
   if (!items || items.length === 0) return "[]";
   const escaped = items.map((i) => `"${i.replace(/"/g, '\\"')}"`);
   return `[${escaped.join(", ")}]`;
+}
+
+function toYamlKey(name: string): string {
+  return name.trim().replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-_]/g, "").replace(/^-+|-+$/g, "") || "custom-field";
 }
 
 const LOWERCASE_WORDS = new Set([
@@ -159,7 +173,6 @@ export default class BookCatalogPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
-    // ── Ribbon: open catalog view ─────────────────────────────────────────
     this.addRibbonIcon("library", "Open Book Catalog", () => {
       const baseFile = this.findExistingBaseFile();
       if (baseFile) {
@@ -169,7 +182,6 @@ export default class BookCatalogPlugin extends Plugin {
       }
     });
 
-    // ── Ribbon: add a book ────────────────────────────────────────────────
     this.addRibbonIcon("book-plus", "Add Book", () => new ISBNModal(this.app, this).open());
 
     this.addCommand({ id: "add-book-by-isbn", name: "Add book by ISBN", callback: () => new ISBNModal(this.app, this).open() });
@@ -182,7 +194,7 @@ export default class BookCatalogPlugin extends Plugin {
     this.addSettingTab(new BookCatalogSettingTab(this.app, this));
   }
 
-  async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
+  async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); if (!this.settings.customFields) this.settings.customFields = []; }
   async saveSettings() { await this.saveData(this.settings); }
 
   async ensureFolder(path: string): Promise<void> {
@@ -348,12 +360,12 @@ export default class BookCatalogPlugin extends Plugin {
     return file instanceof TFile ? file : null;
   }
 
-  async createBookNote(book: BookData, condition: string, acquired: string, valuation: string, copies: string): Promise<void> {
+  async createBookNote(book: BookData, condition: string, acquired: string, valuation: string, copies: string, customValues: Record<string, string> = {}): Promise<void> {
     const notesFolder = getNotesFolder(this.settings);
     await this.ensureFolder(this.settings.baseFolder);
     if (this.settings.notesSubfolder.trim()) await this.ensureFolder(notesFolder);
     const safeTitle = book.title.replace(/[\\/:*?"<>|]/g, "").trim();
-    await this.app.vault.create(`${notesFolder}/${safeTitle}.md`, this.generateNoteContent(book, condition, acquired, valuation, copies));
+    await this.app.vault.create(`${notesFolder}/${safeTitle}.md`, this.generateNoteContent(book, condition, acquired, valuation, copies, customValues));
     new Notice(`✅ Book added: ${book.title}`);
   }
 
@@ -368,10 +380,17 @@ export default class BookCatalogPlugin extends Plugin {
 
   openNote(file: TFile): void { this.app.workspace.getLeaf(false).openFile(file); }
 
-  generateNoteContent(book: BookData, condition: string, acquired: string, valuation: string, copies: string): string {
+  generateNoteContent(book: BookData, condition: string, acquired: string, valuation: string, copies: string, customValues: Record<string, string> = {}): string {
     const coverLine = book.coverUrl ? `\n<img src="${book.coverUrl}" alt="cover" width="150"/>\n` : "";
     const valuationYaml = valuation ? parseFloat(valuation) || `"${valuation}"` : '""';
     const copiesYaml = copies ? parseInt(copies) || 1 : 1;
+    const customLines = this.settings.customFields.map((field) => {
+      const raw = customValues[field.id] ?? "";
+      const key = toYamlKey(field.name);
+      if (field.type === "boolean") return `${key}: ${raw === "true"}`;
+      if (field.type === "number") return `${key}: ${parseFloat(raw) || ""}`;
+      return `${key}: "${raw.replace(/"/g, '\\"')}"`;
+    }).join("\n");
     return `---
 title: "${book.title.replace(/"/g, '\\"')}"
 authors: ${toYamlInline(book.authors)}
@@ -385,7 +404,7 @@ condition: "${condition}"
 acquired: "${acquired}"
 valuation: ${valuationYaml}
 copies: ${copiesYaml}
-subjects: ${toYamlInline(book.subjects)}
+subjects: ${toYamlInline(book.subjects)}${customLines ? "\n" + customLines : ""}
 tags: ["book"]
 ---
 ${coverLine}
@@ -626,6 +645,7 @@ class ISBNModal extends Modal {
 
   showConfirmStep(book: BookData) {
     const { contentEl } = this; contentEl.empty();
+
     const previewEl = contentEl.createDiv(); previewEl.style.cssText = "display:flex; gap:1rem; margin-bottom:1.25rem; align-items:flex-start;";
     if (book.coverUrl) { const imgEl = previewEl.createEl("img"); imgEl.src = book.coverUrl; imgEl.alt = "cover"; imgEl.style.cssText = "width:80px; height:auto; border-radius:4px; flex-shrink:0;"; }
     const metaEl = previewEl.createDiv(); metaEl.style.cssText = "display:flex; flex-direction:column; gap:0.2rem;";
@@ -633,39 +653,87 @@ class ISBNModal extends Modal {
     if (book.authors.length > 0) metaEl.createEl("span", { text: book.authors.join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
     if (book.publisher || book.publishedYear) metaEl.createEl("span", { text: [book.publisher, book.publishedYear].filter(Boolean).join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
     if (book.pages) metaEl.createEl("span", { text: `${book.pages} pages` }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
+
     contentEl.createEl("hr").style.marginBottom = "1rem";
+
     const rowStyle   = "display:flex; align-items:center; gap:0.75rem; margin-bottom:0.75rem;";
     const labelStyle = "min-width:80px; font-weight:500;";
+
+    // ── Standard fields ───────────────────────────────────────────────────
     const conditionWrap = contentEl.createDiv(); conditionWrap.style.cssText = rowStyle;
     conditionWrap.createEl("label", { text: "Condition" }).style.cssText = labelStyle;
     const conditionEl = conditionWrap.createEl("select"); conditionEl.style.cssText = "flex:1; padding:0.35rem;";
     ["", "New", "Fine", "Very Good", "Good", "Fair", "Poor"].forEach((c) => { const opt = conditionEl.createEl("option", { text: c || "— select —" }); opt.value = c; });
+
     const acquiredWrap = contentEl.createDiv(); acquiredWrap.style.cssText = rowStyle;
     acquiredWrap.createEl("label", { text: "Acquired" }).style.cssText = labelStyle;
     const acquiredEl = acquiredWrap.createEl("input", { type: "date" }); acquiredEl.style.cssText = "flex:1; padding:0.35rem;"; acquiredEl.value = new Date().toISOString().split("T")[0];
+
     const copiesWrap = contentEl.createDiv(); copiesWrap.style.cssText = rowStyle;
     copiesWrap.createEl("label", { text: "Copies" }).style.cssText = labelStyle;
     const copiesEl = copiesWrap.createEl("input", { type: "number" }); copiesEl.value = "1"; copiesEl.min = "1"; copiesEl.step = "1"; copiesEl.style.cssText = "flex:1; padding:0.35rem;";
-    const valuationWrap = contentEl.createDiv(); valuationWrap.style.cssText = rowStyle + " margin-bottom:1.25rem;";
+
+    const valuationWrap = contentEl.createDiv(); valuationWrap.style.cssText = rowStyle;
     valuationWrap.createEl("label", { text: "Value (USD)" }).style.cssText = labelStyle;
     const valuationPrefix = valuationWrap.createDiv(); valuationPrefix.style.cssText = "display:flex; align-items:center; flex:1; border:1px solid var(--background-modifier-border); border-radius:4px; overflow:hidden;";
     valuationPrefix.createEl("span", { text: "$" }).style.cssText = "padding:0.35rem 0.5rem; background:var(--background-secondary); color:var(--text-muted); font-weight:500; border-right:1px solid var(--background-modifier-border);";
     const valuationEl = valuationPrefix.createEl("input", { type: "number" }); valuationEl.placeholder = "0.00"; valuationEl.min = "0"; valuationEl.step = "0.01"; valuationEl.style.cssText = "flex:1; padding:0.35rem 0.5rem; border:none; background:transparent; outline:none;";
-    const btnRow = contentEl.createDiv(); btnRow.style.cssText = "display:flex; gap:0.75rem; justify-content:flex-end;";
-    const backBtn        = btnRow.createEl("button", { text: "← Back" });
-    const saveAnotherBtn = btnRow.createEl("button", { text: "Save & Add Another" });
-    const saveBtn        = btnRow.createEl("button", { text: "Save Book" });
-    saveBtn.style.cssText        = "background:var(--interactive-accent); color:var(--text-on-accent); padding:0.4rem 1rem; border-radius:4px;";
-    saveAnotherBtn.style.cssText = "padding:0.4rem 1rem;";
+
+    // ── Custom fields ─────────────────────────────────────────────────────
+    const customGetters: Record<string, () => string> = {};
+    if (this.plugin.settings.customFields.length > 0) {
+      contentEl.createEl("hr").style.cssText = "margin:0.75rem 0;";
+      this.plugin.settings.customFields.forEach((field) => {
+        const wrap = contentEl.createDiv(); wrap.style.cssText = rowStyle;
+        wrap.createEl("label", { text: field.name }).style.cssText = labelStyle + " font-size:0.9rem;";
+        if (field.type === "boolean") {
+          // Toggle switch
+          const toggleOuter = wrap.createDiv(); toggleOuter.style.cssText = "position:relative; width:40px; height:22px; flex-shrink:0;";
+          const toggleInput = toggleOuter.createEl("input", { type: "checkbox" }); toggleInput.style.cssText = "opacity:0; width:0; height:0; position:absolute;";
+          const slider = toggleOuter.createDiv(); slider.style.cssText = "position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background:var(--background-modifier-border); border-radius:22px; transition:background 0.2s;";
+          const knob = slider.createDiv(); knob.style.cssText = "position:absolute; height:16px; width:16px; left:3px; bottom:3px; background:white; border-radius:50%; transition:transform 0.2s;";
+          const sync = () => { slider.style.background = toggleInput.checked ? "var(--interactive-accent)" : "var(--background-modifier-border)"; knob.style.transform = toggleInput.checked ? "translateX(18px)" : "translateX(0)"; };
+          toggleInput.addEventListener("change", sync);
+          slider.addEventListener("click", () => { toggleInput.checked = !toggleInput.checked; sync(); });
+          customGetters[field.id] = () => toggleInput.checked ? "true" : "false";
+        } else if (field.type === "date") {
+          const el = wrap.createEl("input", { type: "date" }); el.style.cssText = "flex:1; padding:0.35rem;";
+          customGetters[field.id] = () => el.value;
+        } else if (field.type === "number") {
+          const el = wrap.createEl("input", { type: "number" }); el.style.cssText = "flex:1; padding:0.35rem;"; el.step = "any";
+          customGetters[field.id] = () => el.value;
+        } else {
+          const el = wrap.createEl("input", { type: "text" }); el.style.cssText = "flex:1; padding:0.35rem;";
+          customGetters[field.id] = () => el.value;
+        }
+      });
+    }
+
+    // ── Buttons ───────────────────────────────────────────────────────────
+    const saveFirst = this.plugin.settings.saveAndAddFirst;
+    const accentStyle  = "background:var(--interactive-accent); color:var(--text-on-accent); padding:0.4rem 1rem; border-radius:4px;";
+    const normalStyle  = "padding:0.4rem 1rem;";
+
+    const btnRow = contentEl.createDiv(); btnRow.style.cssText = "display:flex; gap:0.75rem; justify-content:flex-end; margin-top:1.25rem;";
+    const backBtn        = btnRow.createEl("button", { text: "← Back" }); backBtn.style.cssText = normalStyle;
+    const saveAnotherBtn = btnRow.createEl("button", { text: "Save & Add Another" }); saveAnotherBtn.style.cssText = saveFirst ? accentStyle : normalStyle;
+    const saveBtn        = btnRow.createEl("button", { text: "Save Book" }); saveBtn.style.cssText = saveFirst ? normalStyle : accentStyle;
+
+    const collectCustomValues = (): Record<string, string> => {
+      const vals: Record<string, string> = {};
+      for (const id in customGetters) vals[id] = customGetters[id]();
+      return vals;
+    };
+
     backBtn.addEventListener("click", () => this.showScanStep());
     saveBtn.addEventListener("click", async () => {
       saveBtn.disabled = true; saveBtn.setText("Saving...");
-      await this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value);
+      await this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value, collectCustomValues());
       this.close();
     });
     saveAnotherBtn.addEventListener("click", async () => {
       saveAnotherBtn.disabled = true; saveAnotherBtn.setText("Saving...");
-      await this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value);
+      await this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value, collectCustomValues());
       this.showScanStep();
     });
   }
@@ -682,6 +750,8 @@ class BookCatalogSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this; containerEl.empty();
     containerEl.createEl("h2", { text: "Book Catalog Settings" });
+
+    // ── File Organization ─────────────────────────────────────────────────
     containerEl.createEl("h3", { text: "File Organization" });
     containerEl.createEl("p", { text: "Set where the catalog base file and book notes should live. After changing these, use Reorganize Files below to move existing files." }).style.cssText = "color:var(--text-muted); font-size:0.85rem; margin-bottom:0.75rem;";
     new Setting(containerEl).setName("Catalog folder").setDesc("Folder where Book Catalog.base is created. Can be nested, e.g. '03 Resources/Books'.").addText((text) => text.setPlaceholder("Books").setValue(this.plugin.settings.baseFolder).onChange(async (value) => { this.plugin.settings.baseFolder = value.trim(); await this.plugin.saveSettings(); }));
@@ -692,11 +762,73 @@ class BookCatalogSettingTab extends PluginSettingTab {
     const origSave = this.plugin.saveSettings.bind(this.plugin);
     this.plugin.saveSettings = async () => { await origSave(); updatePreview(); };
     new Setting(containerEl).setName("Create or update base file").setDesc("Creates Book Catalog.base at the path shown above with the correct filters and column layout.").addButton((btn) => btn.setButtonText("Create Base File").setCta().onClick(async () => { await this.plugin.createBaseFile(); }));
+
     containerEl.createEl("hr").style.margin = "1.5rem 0";
+
+    // ── Reorganize ────────────────────────────────────────────────────────
     containerEl.createEl("h3", { text: "Reorganize Files" });
     containerEl.createEl("p", { text: "Move existing book notes and the base file to match your current folder settings. Scans your entire vault first so manually-moved files are always found." }).style.cssText = "color:var(--text-muted); font-size:0.85rem; margin-bottom:0.75rem;";
     new Setting(containerEl).setName("Scan & reorganize").setDesc("Scans the entire vault, shows what was found and where, then lets you confirm before moving anything.").addButton((btn) => btn.setButtonText("Scan Vault & Reorganize").setWarning().onClick(() => { new ReorganizeModal(this.app, this.plugin).open(); }));
+
     containerEl.createEl("hr").style.margin = "1.5rem 0";
+
+    // ── Modal Preferences ─────────────────────────────────────────────────
+    containerEl.createEl("h3", { text: "Modal Preferences" });
+    new Setting(containerEl)
+      .setName("Default to Save & Add Another")
+      .setDesc("When on, 'Save & Add Another' is the primary (highlighted) button in the confirm step. Turn off to make 'Save Book' the primary button instead.")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.saveAndAddFirst).onChange(async (value) => { this.plugin.settings.saveAndAddFirst = value; await this.plugin.saveSettings(); }));
+
+    containerEl.createEl("hr").style.margin = "1.5rem 0";
+
+    // ── Custom Fields ─────────────────────────────────────────────────────
+    containerEl.createEl("h3", { text: "Custom Fields" });
+    containerEl.createEl("p", { text: "Add your own fields to the capture modal. Each field is saved to the note's frontmatter using the field name as the YAML key." }).style.cssText = "color:var(--text-muted); font-size:0.85rem; margin-bottom:0.75rem;";
+
+    const fieldListEl = containerEl.createDiv(); fieldListEl.style.cssText = "margin-bottom:1rem;";
+    const renderFieldList = () => {
+      fieldListEl.empty();
+      if (this.plugin.settings.customFields.length === 0) {
+        fieldListEl.createEl("p", { text: "No custom fields yet." }).style.cssText = "color:var(--text-muted); font-size:0.85rem; font-style:italic;";
+        return;
+      }
+      const typeBadgeStyle = "font-size:0.75rem; padding:0.1rem 0.4rem; border-radius:3px; background:var(--background-modifier-border); color:var(--text-muted); margin-left:0.5rem;";
+      this.plugin.settings.customFields.forEach((field, index) => {
+        const row = fieldListEl.createDiv(); row.style.cssText = "display:flex; align-items:center; justify-content:space-between; padding:0.4rem 0.6rem; border-radius:4px; margin-bottom:0.3rem; background:var(--background-secondary);";
+        const nameEl = row.createDiv(); nameEl.style.cssText = "display:flex; align-items:center;";
+        nameEl.createEl("span", { text: field.name }).style.cssText = "font-size:0.9rem;";
+        nameEl.createEl("span", { text: field.type }).style.cssText = typeBadgeStyle;
+        const deleteBtn = row.createEl("button", { text: "✕" }); deleteBtn.style.cssText = "padding:0.1rem 0.5rem; font-size:0.8rem; color:var(--text-muted);";
+        deleteBtn.addEventListener("click", async () => {
+          this.plugin.settings.customFields.splice(index, 1);
+          await this.plugin.saveSettings();
+          renderFieldList();
+        });
+      });
+    };
+    renderFieldList();
+
+    // Add field form
+    const addRow = containerEl.createDiv(); addRow.style.cssText = "display:flex; gap:0.5rem; align-items:center;";
+    const nameInput = addRow.createEl("input", { type: "text", placeholder: "Field name" }); nameInput.style.cssText = "flex:1; padding:0.35rem;";
+    const typeSelect = addRow.createEl("select"); typeSelect.style.cssText = "padding:0.35rem;";
+    (["text", "number", "date", "boolean"] as const).forEach((t) => { const opt = typeSelect.createEl("option", { text: t }); opt.value = t; });
+    const addBtn = addRow.createEl("button", { text: "Add Field" }); addBtn.style.cssText = "padding:0.35rem 0.75rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
+    addBtn.addEventListener("click", async () => {
+      const name = nameInput.value.trim();
+      if (!name) { nameInput.focus(); return; }
+      const key = toYamlKey(name);
+      if (this.plugin.settings.customFields.some((f) => toYamlKey(f.name) === key)) { new Notice("A field with that name already exists."); return; }
+      this.plugin.settings.customFields.push({ id: `cf-${Date.now()}`, name, type: typeSelect.value as CustomField["type"] });
+      await this.plugin.saveSettings();
+      nameInput.value = "";
+      renderFieldList();
+    });
+    nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") addBtn.click(); });
+
+    containerEl.createEl("hr").style.margin = "1.5rem 0";
+
+    // ── API ───────────────────────────────────────────────────────────────
     containerEl.createEl("h3", { text: "API" });
     new Setting(containerEl).setName("Google Books API key").setDesc("Optional. Used as a fallback if Open Library returns no results. Get a free key at console.cloud.google.com.").addText((text) => text.setPlaceholder("AIza...").setValue(this.plugin.settings.googleBooksApiKey).onChange(async (value) => { this.plugin.settings.googleBooksApiKey = value; await this.plugin.saveSettings(); }));
   }
