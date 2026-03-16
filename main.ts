@@ -21,7 +21,6 @@ interface BookData {
   publisher: string;
   publishedYear: string;
   coverUrl: string;
-  description: string;
   pages: string;
   subjects: string[];
 }
@@ -261,7 +260,6 @@ export default class BookCatalogPlugin extends Plugin {
       publisher: book.publishers?.[0]?.name || "",
       publishedYear: book.publish_date ? book.publish_date.split(" ").pop() : "",
       coverUrl: book.cover?.large || book.cover?.medium || "",
-      description: typeof book.notes === "string" ? book.notes : book.notes?.value || "",
       pages: book.number_of_pages?.toString() || "",
       subjects: (book.subjects || []).slice(0, 8).map((s: any) => s.name || s),
     };
@@ -282,7 +280,6 @@ export default class BookCatalogPlugin extends Plugin {
       publisher: info.publisher || "",
       publishedYear: info.publishedDate ? info.publishedDate.substring(0, 4) : "",
       coverUrl: info.imageLinks?.extraLarge || info.imageLinks?.large || info.imageLinks?.thumbnail || "",
-      description: info.description || "",
       pages: info.pageCount?.toString() || "",
       subjects: (info.categories || []).slice(0, 8),
     };
@@ -314,7 +311,7 @@ export default class BookCatalogPlugin extends Plugin {
       publisher: doc.publisher?.[0] || "",
       publishedYear: doc.first_publish_year?.toString() || "",
       coverUrl: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` : "",
-      description: "", pages: "",
+      pages: "",
       subjects: (doc.subject || []).slice(0, 8),
     }));
   }
@@ -336,7 +333,7 @@ export default class BookCatalogPlugin extends Plugin {
         publisher: info.publisher || "",
         publishedYear: info.publishedDate ? info.publishedDate.substring(0, 4) : "",
         coverUrl: info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || "",
-        description: info.description || "", pages: info.pageCount?.toString() || "",
+        pages: info.pageCount?.toString() || "",
         subjects: (info.categories || []).slice(0, 8),
       };
     });
@@ -501,7 +498,6 @@ class ISBNModal extends Modal {
 
     contentEl.createEl("h2", { text: "Add Book" });
 
-    // ── Tab bar ───────────────────────────────────────────────────────────
     const tabBar = contentEl.createDiv();
     tabBar.style.cssText = "display:flex; gap:0.5rem; margin-bottom:1.25rem;";
     const barcodeBtn = tabBar.createEl("button", { text: "📷  Scan / ISBN" });
@@ -513,20 +509,14 @@ class ISBNModal extends Modal {
     const renderBarcodeTab = () => {
       barcodeBtn.style.cssText = activeStyle; searchBtn.style.cssText = inactiveStyle;
       tabContent.empty();
-
       tabContent.createEl("p", { text: "Scan the barcode with a USB scanner, or type the ISBN manually." }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin:0 0 0.75rem;";
-
       const inputEl = tabContent.createEl("input", { type: "text", placeholder: "ISBN / barcode..." });
       inputEl.style.cssText = "width:100%; margin-bottom:0.75rem; font-size:1.1rem; padding:0.5rem;";
-      // Delay focus so the modal DOM is fully rendered before focusing
       setTimeout(() => inputEl.focus(), 50);
-
       const statusEl = tabContent.createEl("p", { text: "" });
       statusEl.style.cssText = "color:var(--text-muted); min-height:1.5rem; margin:0 0 0.75rem;";
-
       const lookupBtn = tabContent.createEl("button", { text: "Look Up Book" });
       lookupBtn.style.cssText = "width:100%; padding:0.5rem;";
-
       const doLookup = async (isbn: string) => {
         if (!isbn) { statusEl.setText("Please enter an ISBN."); return; }
         lookupBtn.disabled = true; inputEl.disabled = true; statusEl.setText("Looking up book...");
@@ -539,7 +529,6 @@ class ISBNModal extends Modal {
         if (existing) { this.showDuplicateStep(book, existing); return; }
         this.showConfirmStep(book);
       };
-
       inputEl.addEventListener("keydown", (e) => { if (e.key === "Enter") doLookup(inputEl.value.trim()); });
       lookupBtn.addEventListener("click", () => doLookup(inputEl.value.trim()));
     };
@@ -547,31 +536,23 @@ class ISBNModal extends Modal {
     const renderSearchTab = () => {
       barcodeBtn.style.cssText = inactiveStyle; searchBtn.style.cssText = activeStyle;
       tabContent.empty();
-
       tabContent.createEl("p", { text: "Search by title and optionally author. Title is required." }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin:0 0 0.75rem;";
-
       const rowStyle   = "display:flex; align-items:center; gap:0.75rem; margin-bottom:0.6rem;";
       const labelStyle = "min-width:60px; font-weight:500; font-size:0.9rem;";
-
       const titleWrap = tabContent.createDiv(); titleWrap.style.cssText = rowStyle;
       titleWrap.createEl("label", { text: "Title *" }).style.cssText = labelStyle;
       const titleEl = titleWrap.createEl("input", { type: "text", placeholder: "Required" });
       titleEl.style.cssText = "flex:1; padding:0.35rem;";
       setTimeout(() => titleEl.focus(), 50);
-
       const authorWrap = tabContent.createDiv(); authorWrap.style.cssText = rowStyle + " margin-bottom:0.9rem;";
       authorWrap.createEl("label", { text: "Author" }).style.cssText = labelStyle;
       const authorEl = authorWrap.createEl("input", { type: "text", placeholder: "Optional" });
       authorEl.style.cssText = "flex:1; padding:0.35rem;";
-
       const statusEl = tabContent.createEl("p", { text: "" });
       statusEl.style.cssText = "color:var(--text-muted); min-height:1.2rem; margin:0 0 0.5rem; font-size:0.85rem;";
-
       const searchActionBtn = tabContent.createEl("button", { text: "Search Books" });
       searchActionBtn.style.cssText = "width:100%; padding:0.5rem; margin-bottom:0.75rem;";
-
       const resultsEl = tabContent.createDiv();
-
       const renderResults = (books: BookData[]) => {
         resultsEl.empty();
         if (books.length === 0) { resultsEl.createEl("p", { text: "No results found. Try different search terms." }).style.cssText = "color:var(--text-muted); font-size:0.9rem;"; return; }
@@ -595,7 +576,6 @@ class ISBNModal extends Modal {
           });
         });
       };
-
       const doSearch = async () => {
         const title = titleEl.value.trim();
         if (!title) { statusEl.setText("Please enter a title."); statusEl.style.color = "var(--color-red)"; titleEl.focus(); return; }
@@ -604,7 +584,6 @@ class ISBNModal extends Modal {
         statusEl.setText(""); searchActionBtn.disabled = false; searchActionBtn.setText("Search Books");
         renderResults(books);
       };
-
       const onEnter = (e: KeyboardEvent) => { if (e.key === "Enter") doSearch(); };
       titleEl.addEventListener("keydown", onEnter); authorEl.addEventListener("keydown", onEnter);
       searchActionBtn.addEventListener("click", doSearch);
@@ -647,7 +626,6 @@ class ISBNModal extends Modal {
 
   showConfirmStep(book: BookData) {
     const { contentEl } = this; contentEl.empty();
-
     const previewEl = contentEl.createDiv(); previewEl.style.cssText = "display:flex; gap:1rem; margin-bottom:1.25rem; align-items:flex-start;";
     if (book.coverUrl) { const imgEl = previewEl.createEl("img"); imgEl.src = book.coverUrl; imgEl.alt = "cover"; imgEl.style.cssText = "width:80px; height:auto; border-radius:4px; flex-shrink:0;"; }
     const metaEl = previewEl.createDiv(); metaEl.style.cssText = "display:flex; flex-direction:column; gap:0.2rem;";
@@ -655,46 +633,36 @@ class ISBNModal extends Modal {
     if (book.authors.length > 0) metaEl.createEl("span", { text: book.authors.join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
     if (book.publisher || book.publishedYear) metaEl.createEl("span", { text: [book.publisher, book.publishedYear].filter(Boolean).join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
     if (book.pages) metaEl.createEl("span", { text: `${book.pages} pages` }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
-
     contentEl.createEl("hr").style.marginBottom = "1rem";
-
     const rowStyle   = "display:flex; align-items:center; gap:0.75rem; margin-bottom:0.75rem;";
     const labelStyle = "min-width:80px; font-weight:500;";
-
     const conditionWrap = contentEl.createDiv(); conditionWrap.style.cssText = rowStyle;
     conditionWrap.createEl("label", { text: "Condition" }).style.cssText = labelStyle;
     const conditionEl = conditionWrap.createEl("select"); conditionEl.style.cssText = "flex:1; padding:0.35rem;";
     ["", "New", "Fine", "Very Good", "Good", "Fair", "Poor"].forEach((c) => { const opt = conditionEl.createEl("option", { text: c || "— select —" }); opt.value = c; });
-
     const acquiredWrap = contentEl.createDiv(); acquiredWrap.style.cssText = rowStyle;
     acquiredWrap.createEl("label", { text: "Acquired" }).style.cssText = labelStyle;
     const acquiredEl = acquiredWrap.createEl("input", { type: "date" }); acquiredEl.style.cssText = "flex:1; padding:0.35rem;"; acquiredEl.value = new Date().toISOString().split("T")[0];
-
     const copiesWrap = contentEl.createDiv(); copiesWrap.style.cssText = rowStyle;
     copiesWrap.createEl("label", { text: "Copies" }).style.cssText = labelStyle;
     const copiesEl = copiesWrap.createEl("input", { type: "number" }); copiesEl.value = "1"; copiesEl.min = "1"; copiesEl.step = "1"; copiesEl.style.cssText = "flex:1; padding:0.35rem;";
-
     const valuationWrap = contentEl.createDiv(); valuationWrap.style.cssText = rowStyle + " margin-bottom:1.25rem;";
     valuationWrap.createEl("label", { text: "Value (USD)" }).style.cssText = labelStyle;
     const valuationPrefix = valuationWrap.createDiv(); valuationPrefix.style.cssText = "display:flex; align-items:center; flex:1; border:1px solid var(--background-modifier-border); border-radius:4px; overflow:hidden;";
     valuationPrefix.createEl("span", { text: "$" }).style.cssText = "padding:0.35rem 0.5rem; background:var(--background-secondary); color:var(--text-muted); font-weight:500; border-right:1px solid var(--background-modifier-border);";
     const valuationEl = valuationPrefix.createEl("input", { type: "number" }); valuationEl.placeholder = "0.00"; valuationEl.min = "0"; valuationEl.step = "0.01"; valuationEl.style.cssText = "flex:1; padding:0.35rem 0.5rem; border:none; background:transparent; outline:none;";
-
     const btnRow = contentEl.createDiv(); btnRow.style.cssText = "display:flex; gap:0.75rem; justify-content:flex-end;";
     const backBtn        = btnRow.createEl("button", { text: "← Back" });
     const saveAnotherBtn = btnRow.createEl("button", { text: "Save & Add Another" });
     const saveBtn        = btnRow.createEl("button", { text: "Save Book" });
     saveBtn.style.cssText        = "background:var(--interactive-accent); color:var(--text-on-accent); padding:0.4rem 1rem; border-radius:4px;";
     saveAnotherBtn.style.cssText = "padding:0.4rem 1rem;";
-
     backBtn.addEventListener("click", () => this.showScanStep());
-
     saveBtn.addEventListener("click", async () => {
       saveBtn.disabled = true; saveBtn.setText("Saving...");
       await this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value);
       this.close();
     });
-
     saveAnotherBtn.addEventListener("click", async () => {
       saveAnotherBtn.disabled = true; saveAnotherBtn.setText("Saving...");
       await this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value);
