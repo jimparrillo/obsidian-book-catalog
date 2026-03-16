@@ -2,8 +2,6 @@
 
 An Obsidian plugin for cataloging your book collection. Scan ISBN barcodes or search by title and author to automatically pull metadata from Open Library and Google Books, then save a structured note for each book directly in your vault.
 
-![Book Catalog demo](demo.gif)
-
 ## Features
 
 - **Barcode scanning** — scan ISBN barcodes with a USB or Bluetooth barcode scanner; the code is captured instantly as if typed into the input field
@@ -13,43 +11,61 @@ An Obsidian plugin for cataloging your book collection. Scan ISBN barcodes or se
 - **Copies tracking** — track how many copies of a title you own; if you scan a duplicate, the plugin detects it and offers to update the copy count rather than creating a duplicate note
 - **Valuation** — record the estimated value of each book
 - **Acquisition date** — defaults to today, editable before saving
-- **Save & Add Another** — save a book and immediately scan the next without closing the modal, useful for cataloging a large batch
+- **Custom fields** — add your own fields to the capture modal (text, number, date, or boolean toggle); all custom values are saved to the note's frontmatter
+- **Configurable save behavior** — choose whether "Save & Add Another" or "Save Book" is the primary button in settings, useful for single-add vs. batch workflows
 - **Catalog view** — a dedicated ribbon icon opens the Book Catalog base table view directly
-- **Obsidian Bases integration** — automatically creates and manages a `.base` file with four pre-configured table views: All Books, By Year, and Needs Condition
+- **Obsidian Bases integration** — automatically creates and manages a `.base` file with pre-configured table views: All Books, By Year, and Needs Condition
 - **Vault reorganization** — a built-in tool scans your entire vault for book notes (by tag) and moves them to your configured folder, regardless of where they currently live
 - **iOS compatible** — notes and the Base table view sync to iOS via Obsidian Sync and are fully readable on mobile (plugin features require desktop)
+
+## Network Use
+
+This plugin makes network requests to third-party services to retrieve book metadata. No personal data, vault content, or user information is ever sent. The only data transmitted is the ISBN or search terms you enter.
+
+| Service | Purpose | When used | Authentication |
+|---------|---------|-----------|----------------|
+| [Open Library](https://openlibrary.org) (Internet Archive) | ISBN lookup and title/author search | Every lookup and search | None required |
+| [Google Books](https://books.google.com) | ISBN lookup and title/author search (fallback) | When Open Library returns no results | Optional API key (yours) |
+
+No telemetry, analytics, or usage data of any kind is collected or transmitted by this plugin.
+
+## Requirements
+
+- Obsidian v1.8.0 or later (required for Obsidian Bases support)
+- Desktop Obsidian (community plugins are not supported on iOS/Android)
 
 ## Installation
 
 ### From the Obsidian Community Plugin Store (recommended)
 
-1. Open Obsidian Settings → Community plugins
+1. Open Obsidian **Settings → Community plugins**
 2. Turn off Restricted mode if prompted
 3. Click **Browse** and search for **Book Catalog**
 4. Click **Install**, then **Enable**
 
 ### Manual installation
 
-1. Download the latest release from the [GitHub releases page](https://github.com/jimparrillo/obsidian-book-catalog/releases)
-2. Copy `main.js` and `manifest.json` into a folder called `book-catalog` inside your vault's `.obsidian/plugins/` directory
-3. Reload Obsidian and enable the plugin in Settings → Community plugins
+1. Download `main.js` and `manifest.json` from the [latest release](https://github.com/jimparrillo/obsidian-book-catalog/releases)
+2. Create a folder called `book-catalog` inside your vault's `.obsidian/plugins/` directory
+3. Copy both files into that folder
+4. Reload Obsidian and enable the plugin in **Settings → Community plugins**
 
 ## Setup
 
 ### 1. Configure your folders
 
-Go to **Settings → Book Catalog** and set:
+Go to **Settings → Book Catalog → File Organization** and set:
 
 - **Catalog folder** — where `Book Catalog.base` will be created (e.g. `Books` or `03 Resources/Books`)
 - **Notes subfolder** — subfolder inside the catalog folder for individual book notes (e.g. `Notes`); leave blank to store notes directly in the catalog folder
 
 ### 2. Create the Base file
 
-Click **Create Base File** in settings. This creates `Book Catalog.base` at your configured path with all four table views pre-configured. You need [Obsidian Bases](https://obsidian.md/bases) enabled (available in Obsidian v1.8+).
+Click **Create Base File** in settings. This creates `Book Catalog.base` at your configured path with all table views pre-configured. You need [Obsidian Bases](https://obsidian.md/bases) enabled (available in Obsidian v1.8+).
 
 ### 3. Optional: Google Books API key
 
-Open Library is used as the primary metadata source and requires no API key. Google Books is used as a fallback. For higher rate limits on Google Books, add a free API key from [Google Cloud Console](https://console.cloud.google.com) in the API section of settings.
+Open Library is used as the primary metadata source and requires no API key. Google Books is used as a fallback. For higher rate limits on Google Books, add a free API key from [Google Cloud Console](https://console.cloud.google.com) in **Settings → Book Catalog → API**.
 
 ## Usage
 
@@ -59,7 +75,7 @@ Open Library is used as the primary metadata source and requires no API key. Goo
 2. The modal opens with focus in the barcode field — scan or type an ISBN
 3. Press Enter or click **Look Up Book**
 4. Review the metadata preview, set condition, copies, acquisition date, and value
-5. Click **Save Book** to create the note, or **Save & Add Another** to save and immediately scan the next item
+5. Click **Save Book** or **Save & Add Another** to save and immediately scan the next item
 
 ### Adding a book by title search
 
@@ -74,7 +90,13 @@ Click the **library icon** in the left ribbon to open the Book Catalog table vie
 
 ### Handling duplicates
 
-If you scan a book that already exists in your catalog, the plugin shows the existing entry with the current copy count and offers to update it rather than creating a duplicate.
+If you scan a book that already exists in your catalog, the plugin shows the existing entry with the current copy count and offers to update it rather than creating a duplicate note.
+
+### Custom fields
+
+Go to **Settings → Book Catalog → Custom Fields** to add your own fields. Each field has a name and a type (text, number, date, or boolean toggle). Custom fields appear in the confirm modal below the standard fields and are saved to the note's frontmatter using the field name as the YAML key (spaces become hyphens).
+
+Examples: `dewey-decimal` (text), `purchase-price` (number), `signed` (boolean), `read-date` (date).
 
 ## Note format
 
@@ -99,7 +121,7 @@ tags: ["book"]
 ---
 ```
 
-Followed by a cover image and a `## Notes` section for personal annotations.
+Followed by a cover image and a `## Notes` section for personal annotations. Any custom fields you have configured appear between `subjects` and `tags`.
 
 ## Condition grades
 
@@ -116,12 +138,15 @@ Followed by a cover image and a `## Notes` section for personal annotations.
 
 If you change your folder settings after adding books, use **Settings → Reorganize Files → Scan Vault & Reorganize**. The tool scans your entire vault for notes tagged `#book`, shows you what it found and where, then moves everything to the correct location after you confirm.
 
-## Limitations
+## Settings reference
 
-- Requires desktop Obsidian (community plugins are not supported on iOS/Android)
-- Barcode scanning requires a USB or Bluetooth barcode scanner that acts as a keyboard input device
-- Metadata quality depends on Open Library and Google Books coverage — older or obscure books may return incomplete results
-- Requires Obsidian v1.8.0 or later for Bases support
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Catalog folder | Where `Book Catalog.base` is created | `Books` |
+| Notes subfolder | Subfolder inside catalog folder for book notes | `Notes` |
+| Default to Save & Add Another | Makes "Save & Add Another" the primary button | On |
+| Custom Fields | Add user-defined fields to the capture modal | None |
+| Google Books API key | Optional fallback API key | Empty |
 
 ## Support
 
