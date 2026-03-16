@@ -159,8 +159,27 @@ export default class BookCatalogPlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
-    this.addRibbonIcon("book", "Add Book by ISBN", () => new ISBNModal(this.app, this).open());
+
+    // ── Ribbon: open catalog view ─────────────────────────────────────────
+    this.addRibbonIcon("library", "Open Book Catalog", () => {
+      const baseFile = this.findExistingBaseFile();
+      if (baseFile) {
+        this.app.workspace.getLeaf(false).openFile(baseFile);
+      } else {
+        new Notice("Book Catalog.base not found. Create it in Settings → Book Catalog.");
+      }
+    });
+
+    // ── Ribbon: add a book ────────────────────────────────────────────────
+    this.addRibbonIcon("book-plus", "Add Book", () => new ISBNModal(this.app, this).open());
+
     this.addCommand({ id: "add-book-by-isbn", name: "Add book by ISBN", callback: () => new ISBNModal(this.app, this).open() });
+    this.addCommand({ id: "open-book-catalog", name: "Open Book Catalog", callback: () => {
+      const baseFile = this.findExistingBaseFile();
+      if (baseFile) this.app.workspace.getLeaf(false).openFile(baseFile);
+      else new Notice("Book Catalog.base not found. Create it in Settings → Book Catalog.");
+    }});
+
     this.addSettingTab(new BookCatalogSettingTab(this.app, this));
   }
 
@@ -270,33 +289,14 @@ export default class BookCatalogPlugin extends Plugin {
   }
 
   // ─── Manual Title/Author Search ───────────────────────────────────────────
-  // Queries Open Library search, falls back to Google Books search.
-  // Returns up to 10 combined results deduplicated by normalized title+author.
 
   async searchBooks(title: string, author: string): Promise<BookData[]> {
     const results: BookData[] = [];
     const seen = new Set<string>();
-
-    const dedupeKey = (b: BookData) =>
-      `${b.title.toLowerCase().trim()}|${(b.authors[0] || "").toLowerCase().trim()}`;
-
-    const addResult = (b: BookData) => {
-      const key = dedupeKey(b);
-      if (!seen.has(key)) { seen.add(key); results.push(b); }
-    };
-
-    // Open Library search
-    try {
-      const olResults = await this.searchOpenLibrary(title, author);
-      olResults.forEach(addResult);
-    } catch (e) { console.warn("Open Library search failed:", e); }
-
-    // Google Books search (fills gaps)
-    try {
-      const gbResults = await this.searchGoogleBooks(title, author);
-      gbResults.forEach(addResult);
-    } catch (e) { console.warn("Google Books search failed:", e); }
-
+    const dedupeKey = (b: BookData) => `${b.title.toLowerCase().trim()}|${(b.authors[0] || "").toLowerCase().trim()}`;
+    const addResult = (b: BookData) => { const key = dedupeKey(b); if (!seen.has(key)) { seen.add(key); results.push(b); } };
+    try { (await this.searchOpenLibrary(title, author)).forEach(addResult); } catch (e) { console.warn("Open Library search failed:", e); }
+    try { (await this.searchGoogleBooks(title, author)).forEach(addResult); } catch (e) { console.warn("Google Books search failed:", e); }
     return results.slice(0, 10);
   }
 
@@ -314,8 +314,7 @@ export default class BookCatalogPlugin extends Plugin {
       publisher: doc.publisher?.[0] || "",
       publishedYear: doc.first_publish_year?.toString() || "",
       coverUrl: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` : "",
-      description: "",
-      pages: "",
+      description: "", pages: "",
       subjects: (doc.subject || []).slice(0, 8),
     }));
   }
@@ -332,15 +331,12 @@ export default class BookCatalogPlugin extends Plugin {
       const isbn = info.industryIdentifiers?.find((id: any) => id.type === "ISBN_13")?.identifier
         || info.industryIdentifiers?.find((id: any) => id.type === "ISBN_10")?.identifier || "";
       return {
-        isbn,
-        title: toTitleCase(info.title || "Unknown Title"),
-        authors: toTitleCaseNames(info.authors || []),
-        editors: [],
+        isbn, title: toTitleCase(info.title || "Unknown Title"),
+        authors: toTitleCaseNames(info.authors || []), editors: [],
         publisher: info.publisher || "",
         publishedYear: info.publishedDate ? info.publishedDate.substring(0, 4) : "",
         coverUrl: info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || "",
-        description: info.description || "",
-        pages: info.pageCount?.toString() || "",
+        description: info.description || "", pages: info.pageCount?.toString() || "",
         subjects: (info.categories || []).slice(0, 8),
       };
     });
@@ -419,14 +415,10 @@ class ReorganizeModal extends Modal {
     targetEl.createEl("p", { text: "Target location (from your settings):" }).style.cssText = "font-weight:600; margin:0 0 0.4rem;";
     targetEl.createEl("p", { text: `📄 ${getBasePath(this.plugin.settings.baseFolder)}` }).style.cssText = "margin:0 0 0.2rem; color:var(--text-muted);";
     targetEl.createEl("p", { text: `📚 ${getNotesFolder(this.plugin.settings)}/` }).style.cssText = "margin:0; color:var(--text-muted);";
-    const resultsEl = contentEl.createDiv();
-    resultsEl.style.cssText = "min-height:2rem; margin-bottom:1rem;";
-    const btnRow = contentEl.createDiv();
-    btnRow.style.cssText = "display:flex; gap:0.75rem;";
-    const cancelBtn = btnRow.createEl("button", { text: "Cancel" });
-    cancelBtn.style.cssText = "flex:1; padding:0.5rem;";
-    const scanBtn = btnRow.createEl("button", { text: "🔍  Scan Vault" });
-    scanBtn.style.cssText = "flex:1; padding:0.5rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
+    const resultsEl = contentEl.createDiv(); resultsEl.style.cssText = "min-height:2rem; margin-bottom:1rem;";
+    const btnRow = contentEl.createDiv(); btnRow.style.cssText = "display:flex; gap:0.75rem;";
+    const cancelBtn = btnRow.createEl("button", { text: "Cancel" }); cancelBtn.style.cssText = "flex:1; padding:0.5rem;";
+    const scanBtn = btnRow.createEl("button", { text: "🔍  Scan Vault" }); scanBtn.style.cssText = "flex:1; padding:0.5rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
     cancelBtn.addEventListener("click", () => this.close());
     scanBtn.addEventListener("click", () => {
       scanBtn.disabled = true; scanBtn.setText("Scanning..."); resultsEl.empty();
@@ -436,13 +428,9 @@ class ReorganizeModal extends Modal {
       const existingBase = this.plugin.findExistingBaseFile();
       const newBasePath = getBasePath(this.plugin.settings.baseFolder);
       const baseNeedsMove = !!(existingBase && existingBase.path !== newBasePath);
-      const resultBox = resultsEl.createDiv();
-      resultBox.style.cssText = "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; font-size:0.85rem;";
+      const resultBox = resultsEl.createDiv(); resultBox.style.cssText = "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; font-size:0.85rem;";
       resultBox.createEl("p", { text: `✅ Scan complete — found ${bookNotes.length} book note${bookNotes.length !== 1 ? "s" : ""} in your vault.` }).style.cssText = "font-weight:600; margin:0 0 0.5rem;";
-      if (bookNotes.length === 0) {
-        resultBox.createEl("p", { text: 'No book notes found. Make sure your notes have tags: ["book"] in their frontmatter.' }).style.cssText = "color:var(--text-muted); margin:0;";
-        scanBtn.disabled = false; scanBtn.setText("🔍  Scan Vault"); return;
-      }
+      if (bookNotes.length === 0) { resultBox.createEl("p", { text: 'No book notes found. Make sure your notes have tags: ["book"] in their frontmatter.' }).style.cssText = "color:var(--text-muted); margin:0;"; scanBtn.disabled = false; scanBtn.setText("🔍  Scan Vault"); return; }
       const byFolder = new Map<string, TFile[]>();
       for (const f of bookNotes) { const folder = f.parent?.path ?? "(root)"; if (!byFolder.has(folder)) byFolder.set(folder, []); byFolder.get(folder)!.push(f); }
       byFolder.forEach((files, folder) => {
@@ -452,10 +440,7 @@ class ReorganizeModal extends Modal {
         if (alreadyInPlace) folderEl.createEl("span", { text: " ✓ already in target" }).style.cssText = "color:var(--color-green); font-size:0.8rem;";
       });
       if (existingBase) resultBox.createEl("p", { text: `📄 Book Catalog.base: ${existingBase.path}` }).style.cssText = "margin:0.5rem 0 0; color:var(--text-muted);";
-      if (notesToMove.length === 0 && !baseNeedsMove) {
-        resultBox.createEl("p", { text: "✅ Everything is already in the correct location." }).style.cssText = "margin:0.75rem 0 0; font-weight:600; color:var(--color-green);";
-        scanBtn.disabled = false; scanBtn.setText("🔍  Scan Again"); return;
-      }
+      if (notesToMove.length === 0 && !baseNeedsMove) { resultBox.createEl("p", { text: "✅ Everything is already in the correct location." }).style.cssText = "margin:0.75rem 0 0; font-weight:600; color:var(--color-green);"; scanBtn.disabled = false; scanBtn.setText("🔍  Scan Again"); return; }
       const proceedRow = resultsEl.createDiv(); proceedRow.style.cssText = "display:flex; justify-content:flex-end; margin-top:0.75rem;";
       const proceedBtn = proceedRow.createEl("button", { text: `Review ${notesToMove.length} move${notesToMove.length !== 1 ? "s" : ""} →` });
       proceedBtn.style.cssText = "padding:0.4rem 1rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
@@ -466,9 +451,7 @@ class ReorganizeModal extends Modal {
 
   showConfirmStep(allNotes: TFile[], notesToMove: TFile[], existingBase: TFile | null, baseNeedsMove: boolean) {
     const { contentEl } = this; contentEl.empty();
-    const s = this.plugin.settings;
-    const newNotesFolder = getNotesFolder(s);
-    const newBasePath = getBasePath(s.baseFolder);
+    const s = this.plugin.settings; const newNotesFolder = getNotesFolder(s); const newBasePath = getBasePath(s.baseFolder);
     contentEl.createEl("h2", { text: "Confirm Reorganization" });
     contentEl.createEl("p", { text: "Review the changes below before confirming." }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;";
     const treeStyle = "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; font-family:monospace; font-size:0.82rem; margin-bottom:0.75rem; line-height:1.8;";
@@ -491,15 +474,13 @@ class ReorganizeModal extends Modal {
       baseBox.createEl("div", { text: `📄 ${existingBase.path}` }).style.cssText = "color:var(--text-muted);";
       baseBox.createEl("div", { text: `↳ → ${newBasePath}` }).style.cssText = "color:var(--color-green);";
     }
-    const summaryEl = contentEl.createDiv();
-    summaryEl.style.cssText = "background:var(--background-modifier-border); border-radius:6px; padding:0.6rem 0.9rem; margin-bottom:1.25rem; font-size:0.85rem;";
+    const summaryEl = contentEl.createDiv(); summaryEl.style.cssText = "background:var(--background-modifier-border); border-radius:6px; padding:0.6rem 0.9rem; margin-bottom:1.25rem; font-size:0.85rem;";
     summaryEl.createEl("p", { text: `📚 ${notesToMove.length} note${notesToMove.length !== 1 ? "s" : ""} → ${newNotesFolder}/` }).style.cssText = "margin:0 0 0.2rem;";
     if (baseNeedsMove) summaryEl.createEl("p", { text: `📄 Base → ${newBasePath}` }).style.cssText = "margin:0 0 0.2rem;";
     summaryEl.createEl("p", { text: "📄 Book Catalog.base will be regenerated with updated paths." }).style.cssText = "margin:0;";
     const btnRow = contentEl.createDiv(); btnRow.style.cssText = "display:flex; gap:0.75rem; justify-content:flex-end;";
     const backBtn = btnRow.createEl("button", { text: "← Back" }); backBtn.style.cssText = "padding:0.4rem 1rem;";
-    const confirmBtn = btnRow.createEl("button", { text: "Confirm & Move Files" });
-    confirmBtn.style.cssText = "background:var(--interactive-accent); color:var(--text-on-accent); padding:0.4rem 1rem; border-radius:4px;";
+    const confirmBtn = btnRow.createEl("button", { text: "Confirm & Move Files" }); confirmBtn.style.cssText = "background:var(--interactive-accent); color:var(--text-on-accent); padding:0.4rem 1rem; border-radius:4px;";
     backBtn.addEventListener("click", () => this.showScanStep());
     confirmBtn.addEventListener("click", async () => { confirmBtn.disabled = true; confirmBtn.setText("Moving files..."); await this.plugin.reorganizeFiles(allNotes); this.close(); });
   }
@@ -523,24 +504,22 @@ class ISBNModal extends Modal {
     // ── Tab bar ───────────────────────────────────────────────────────────
     const tabBar = contentEl.createDiv();
     tabBar.style.cssText = "display:flex; gap:0.5rem; margin-bottom:1.25rem;";
-
     const barcodeBtn = tabBar.createEl("button", { text: "📷  Scan / ISBN" });
-    const searchBtn = tabBar.createEl("button", { text: "🔍  Search by Title" });
-    const activeStyle = "flex:1; padding:0.4rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px; font-weight:500; cursor:pointer;";
+    const searchBtn  = tabBar.createEl("button", { text: "🔍  Search by Title" });
+    const activeStyle   = "flex:1; padding:0.4rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px; font-weight:500; cursor:pointer;";
     const inactiveStyle = "flex:1; padding:0.4rem; background:var(--background-secondary); border-radius:4px; cursor:pointer;";
-
     const tabContent = contentEl.createDiv();
 
     const renderBarcodeTab = () => {
-      barcodeBtn.style.cssText = activeStyle;
-      searchBtn.style.cssText = inactiveStyle;
+      barcodeBtn.style.cssText = activeStyle; searchBtn.style.cssText = inactiveStyle;
       tabContent.empty();
 
       tabContent.createEl("p", { text: "Scan the barcode with a USB scanner, or type the ISBN manually." }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin:0 0 0.75rem;";
 
       const inputEl = tabContent.createEl("input", { type: "text", placeholder: "ISBN / barcode..." });
       inputEl.style.cssText = "width:100%; margin-bottom:0.75rem; font-size:1.1rem; padding:0.5rem;";
-      inputEl.focus();
+      // Delay focus so the modal DOM is fully rendered before focusing
+      setTimeout(() => inputEl.focus(), 50);
 
       const statusEl = tabContent.createEl("p", { text: "" });
       statusEl.style.cssText = "color:var(--text-muted); min-height:1.5rem; margin:0 0 0.75rem;";
@@ -566,20 +545,19 @@ class ISBNModal extends Modal {
     };
 
     const renderSearchTab = () => {
-      barcodeBtn.style.cssText = inactiveStyle;
-      searchBtn.style.cssText = activeStyle;
+      barcodeBtn.style.cssText = inactiveStyle; searchBtn.style.cssText = activeStyle;
       tabContent.empty();
 
       tabContent.createEl("p", { text: "Search by title and optionally author. Title is required." }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin:0 0 0.75rem;";
 
-      const rowStyle = "display:flex; align-items:center; gap:0.75rem; margin-bottom:0.6rem;";
+      const rowStyle   = "display:flex; align-items:center; gap:0.75rem; margin-bottom:0.6rem;";
       const labelStyle = "min-width:60px; font-weight:500; font-size:0.9rem;";
 
       const titleWrap = tabContent.createDiv(); titleWrap.style.cssText = rowStyle;
       titleWrap.createEl("label", { text: "Title *" }).style.cssText = labelStyle;
       const titleEl = titleWrap.createEl("input", { type: "text", placeholder: "Required" });
       titleEl.style.cssText = "flex:1; padding:0.35rem;";
-      titleEl.focus();
+      setTimeout(() => titleEl.focus(), 50);
 
       const authorWrap = tabContent.createDiv(); authorWrap.style.cssText = rowStyle + " margin-bottom:0.9rem;";
       authorWrap.createEl("label", { text: "Author" }).style.cssText = labelStyle;
@@ -592,38 +570,22 @@ class ISBNModal extends Modal {
       const searchActionBtn = tabContent.createEl("button", { text: "Search Books" });
       searchActionBtn.style.cssText = "width:100%; padding:0.5rem; margin-bottom:0.75rem;";
 
-      // Results container — appears inline below the search form
       const resultsEl = tabContent.createDiv();
 
       const renderResults = (books: BookData[]) => {
         resultsEl.empty();
-        if (books.length === 0) {
-          resultsEl.createEl("p", { text: "No results found. Try different search terms." }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
-          return;
-        }
-
+        if (books.length === 0) { resultsEl.createEl("p", { text: "No results found. Try different search terms." }).style.cssText = "color:var(--text-muted); font-size:0.9rem;"; return; }
         resultsEl.createEl("p", { text: `${books.length} result${books.length !== 1 ? "s" : ""} — click to select` }).style.cssText = "font-size:0.8rem; color:var(--text-muted); margin-bottom:0.5rem;";
-
         books.forEach((book) => {
           const card = resultsEl.createDiv();
           card.style.cssText = "display:flex; gap:0.65rem; padding:0.6rem; border-radius:6px; border:1px solid var(--background-modifier-border); margin-bottom:0.4rem; cursor:pointer; align-items:flex-start;";
-
-          if (book.coverUrl) {
-            const img = card.createEl("img");
-            img.src = book.coverUrl; img.alt = "cover";
-            img.style.cssText = "width:40px; height:auto; border-radius:3px; flex-shrink:0;";
-          } else {
-            const ph = card.createDiv();
-            ph.style.cssText = "width:40px; height:54px; background:var(--background-secondary); border-radius:3px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:1.2rem;";
-            ph.createEl("span", { text: "📖" });
-          }
-
+          if (book.coverUrl) { const img = card.createEl("img"); img.src = book.coverUrl; img.alt = "cover"; img.style.cssText = "width:40px; height:auto; border-radius:3px; flex-shrink:0;"; }
+          else { const ph = card.createDiv(); ph.style.cssText = "width:40px; height:54px; background:var(--background-secondary); border-radius:3px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:1.2rem;"; ph.createEl("span", { text: "📖" }); }
           const info = card.createDiv(); info.style.cssText = "flex:1; min-width:0;";
           info.createEl("div", { text: book.title }).style.cssText = "font-weight:600; font-size:0.9rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;";
           if (book.authors.length > 0) info.createEl("div", { text: book.authors.join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.82rem;";
           const meta = [book.publisher, book.publishedYear].filter(Boolean).join(", ");
           if (meta) info.createEl("div", { text: meta }).style.cssText = "color:var(--text-muted); font-size:0.82rem;";
-
           card.addEventListener("mouseenter", () => { card.style.background = "var(--background-secondary)"; });
           card.addEventListener("mouseleave", () => { card.style.background = ""; });
           card.addEventListener("click", () => {
@@ -637,19 +599,14 @@ class ISBNModal extends Modal {
       const doSearch = async () => {
         const title = titleEl.value.trim();
         if (!title) { statusEl.setText("Please enter a title."); statusEl.style.color = "var(--color-red)"; titleEl.focus(); return; }
-        statusEl.style.color = "var(--text-muted)";
-        searchActionBtn.disabled = true; searchActionBtn.setText("Searching...");
-        statusEl.setText("Searching…");
-        resultsEl.empty();
+        statusEl.style.color = "var(--text-muted)"; searchActionBtn.disabled = true; searchActionBtn.setText("Searching..."); statusEl.setText("Searching…"); resultsEl.empty();
         const books = await this.plugin.searchBooks(title, authorEl.value.trim());
-        statusEl.setText("");
-        searchActionBtn.disabled = false; searchActionBtn.setText("Search Books");
+        statusEl.setText(""); searchActionBtn.disabled = false; searchActionBtn.setText("Search Books");
         renderResults(books);
       };
 
       const onEnter = (e: KeyboardEvent) => { if (e.key === "Enter") doSearch(); };
-      titleEl.addEventListener("keydown", onEnter);
-      authorEl.addEventListener("keydown", onEnter);
+      titleEl.addEventListener("keydown", onEnter); authorEl.addEventListener("keydown", onEnter);
       searchActionBtn.addEventListener("click", doSearch);
     };
 
@@ -681,8 +638,8 @@ class ISBNModal extends Modal {
     const copiesEl = copiesWrap.createEl("input", { type: "number" }); copiesEl.value = String(currentCopies + 1); copiesEl.min = "1"; copiesEl.step = "1"; copiesEl.style.cssText = "flex:1; padding:0.35rem;";
     const btnCol = contentEl.createDiv(); btnCol.style.cssText = "display:flex; flex-direction:column; gap:0.6rem;";
     const updateBtn = btnCol.createEl("button", { text: "✅  Update Copies" }); updateBtn.style.cssText = "width:100%; padding:0.5rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
-    const openBtn = btnCol.createEl("button", { text: "📖  Open Existing Note" }); openBtn.style.cssText = "width:100%; padding:0.5rem;";
-    const scanBtn = btnCol.createEl("button", { text: "↩  Search Again" }); scanBtn.style.cssText = "width:100%; padding:0.5rem;";
+    const openBtn  = btnCol.createEl("button", { text: "📖  Open Existing Note" }); openBtn.style.cssText = "width:100%; padding:0.5rem;";
+    const scanBtn  = btnCol.createEl("button", { text: "↩  Search Again" }); scanBtn.style.cssText = "width:100%; padding:0.5rem;";
     updateBtn.addEventListener("click", async () => { const newCount = parseInt(copiesEl.value) || currentCopies + 1; updateBtn.disabled = true; updateBtn.setText("Saving..."); await this.plugin.updateCopies(existing, newCount); this.close(); });
     openBtn.addEventListener("click", () => { this.plugin.openNote(existing); this.close(); });
     scanBtn.addEventListener("click", () => this.showScanStep());
@@ -690,6 +647,7 @@ class ISBNModal extends Modal {
 
   showConfirmStep(book: BookData) {
     const { contentEl } = this; contentEl.empty();
+
     const previewEl = contentEl.createDiv(); previewEl.style.cssText = "display:flex; gap:1rem; margin-bottom:1.25rem; align-items:flex-start;";
     if (book.coverUrl) { const imgEl = previewEl.createEl("img"); imgEl.src = book.coverUrl; imgEl.alt = "cover"; imgEl.style.cssText = "width:80px; height:auto; border-radius:4px; flex-shrink:0;"; }
     const metaEl = previewEl.createDiv(); metaEl.style.cssText = "display:flex; flex-direction:column; gap:0.2rem;";
@@ -697,29 +655,51 @@ class ISBNModal extends Modal {
     if (book.authors.length > 0) metaEl.createEl("span", { text: book.authors.join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
     if (book.publisher || book.publishedYear) metaEl.createEl("span", { text: [book.publisher, book.publishedYear].filter(Boolean).join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
     if (book.pages) metaEl.createEl("span", { text: `${book.pages} pages` }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
+
     contentEl.createEl("hr").style.marginBottom = "1rem";
-    const rowStyle = "display:flex; align-items:center; gap:0.75rem; margin-bottom:0.75rem;";
+
+    const rowStyle   = "display:flex; align-items:center; gap:0.75rem; margin-bottom:0.75rem;";
     const labelStyle = "min-width:80px; font-weight:500;";
+
     const conditionWrap = contentEl.createDiv(); conditionWrap.style.cssText = rowStyle;
     conditionWrap.createEl("label", { text: "Condition" }).style.cssText = labelStyle;
     const conditionEl = conditionWrap.createEl("select"); conditionEl.style.cssText = "flex:1; padding:0.35rem;";
     ["", "New", "Fine", "Very Good", "Good", "Fair", "Poor"].forEach((c) => { const opt = conditionEl.createEl("option", { text: c || "— select —" }); opt.value = c; });
+
     const acquiredWrap = contentEl.createDiv(); acquiredWrap.style.cssText = rowStyle;
     acquiredWrap.createEl("label", { text: "Acquired" }).style.cssText = labelStyle;
     const acquiredEl = acquiredWrap.createEl("input", { type: "date" }); acquiredEl.style.cssText = "flex:1; padding:0.35rem;"; acquiredEl.value = new Date().toISOString().split("T")[0];
+
     const copiesWrap = contentEl.createDiv(); copiesWrap.style.cssText = rowStyle;
     copiesWrap.createEl("label", { text: "Copies" }).style.cssText = labelStyle;
     const copiesEl = copiesWrap.createEl("input", { type: "number" }); copiesEl.value = "1"; copiesEl.min = "1"; copiesEl.step = "1"; copiesEl.style.cssText = "flex:1; padding:0.35rem;";
+
     const valuationWrap = contentEl.createDiv(); valuationWrap.style.cssText = rowStyle + " margin-bottom:1.25rem;";
     valuationWrap.createEl("label", { text: "Value (USD)" }).style.cssText = labelStyle;
     const valuationPrefix = valuationWrap.createDiv(); valuationPrefix.style.cssText = "display:flex; align-items:center; flex:1; border:1px solid var(--background-modifier-border); border-radius:4px; overflow:hidden;";
     valuationPrefix.createEl("span", { text: "$" }).style.cssText = "padding:0.35rem 0.5rem; background:var(--background-secondary); color:var(--text-muted); font-weight:500; border-right:1px solid var(--background-modifier-border);";
     const valuationEl = valuationPrefix.createEl("input", { type: "number" }); valuationEl.placeholder = "0.00"; valuationEl.min = "0"; valuationEl.step = "0.01"; valuationEl.style.cssText = "flex:1; padding:0.35rem 0.5rem; border:none; background:transparent; outline:none;";
+
     const btnRow = contentEl.createDiv(); btnRow.style.cssText = "display:flex; gap:0.75rem; justify-content:flex-end;";
-    const backBtn = btnRow.createEl("button", { text: "← Back" });
-    const saveBtn = btnRow.createEl("button", { text: "Save Book" }); saveBtn.style.cssText = "background:var(--interactive-accent); color:var(--text-on-accent); padding:0.4rem 1rem; border-radius:4px;";
+    const backBtn        = btnRow.createEl("button", { text: "← Back" });
+    const saveAnotherBtn = btnRow.createEl("button", { text: "Save & Add Another" });
+    const saveBtn        = btnRow.createEl("button", { text: "Save Book" });
+    saveBtn.style.cssText        = "background:var(--interactive-accent); color:var(--text-on-accent); padding:0.4rem 1rem; border-radius:4px;";
+    saveAnotherBtn.style.cssText = "padding:0.4rem 1rem;";
+
     backBtn.addEventListener("click", () => this.showScanStep());
-    saveBtn.addEventListener("click", async () => { saveBtn.disabled = true; saveBtn.setText("Saving..."); await this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value); this.close(); });
+
+    saveBtn.addEventListener("click", async () => {
+      saveBtn.disabled = true; saveBtn.setText("Saving...");
+      await this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value);
+      this.close();
+    });
+
+    saveAnotherBtn.addEventListener("click", async () => {
+      saveAnotherBtn.disabled = true; saveAnotherBtn.setText("Saving...");
+      await this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value);
+      this.showScanStep();
+    });
   }
 
   onClose() { this.contentEl.empty(); }
