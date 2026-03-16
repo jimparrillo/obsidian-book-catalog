@@ -1,0 +1,603 @@
+/* ── Hints & status ─────────────────────────────────────── */
+.bc-hint {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin: 0 0 0.75rem;
+}
+
+.bc-status {
+  color: var(--text-muted);
+  min-height: 1.5rem;
+  margin: 0 0 0.75rem;
+}
+
+.bc-status.is-error {
+  color: var(--color-red);
+}
+
+.bc-status-search {
+  color: var(--text-muted);
+  min-height: 1.2rem;
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}
+
+.bc-status-search.is-error {
+  color: var(--color-red);
+}
+
+/* ── Tab bar ────────────────────────────────────────────── */
+.bc-tab-bar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.bc-tab-btn {
+  flex: 1;
+  padding: 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+  background: var(--background-secondary);
+}
+
+.bc-tab-btn.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-weight: 500;
+}
+
+/* ── ISBN / barcode input ───────────────────────────────── */
+.bc-isbn-input {
+  width: 100%;
+  margin-bottom: 0.75rem;
+  font-size: 1.1rem;
+  padding: 0.5rem;
+}
+
+.bc-lookup-btn {
+  width: 100%;
+  padding: 0.5rem;
+}
+
+/* ── Form rows ──────────────────────────────────────────── */
+.bc-form-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+
+.bc-form-row-last {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+}
+
+.bc-form-label {
+  min-width: 60px;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.bc-form-input {
+  flex: 1;
+  padding: 0.35rem;
+}
+
+/* ── Search button ──────────────────────────────────────── */
+.bc-search-btn {
+  width: 100%;
+  padding: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+/* ── Results ────────────────────────────────────────────── */
+.bc-result-count {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.bc-result-card {
+  display: flex;
+  gap: 0.65rem;
+  padding: 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  margin-bottom: 0.4rem;
+  cursor: pointer;
+  align-items: flex-start;
+}
+
+.bc-result-card:hover {
+  background: var(--background-secondary);
+}
+
+.bc-result-thumb {
+  width: 40px;
+  height: auto;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.bc-result-thumb-placeholder {
+  width: 40px;
+  height: 54px;
+  background: var(--background-secondary);
+  border-radius: 3px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+}
+
+.bc-result-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.bc-result-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bc-result-meta {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+/* ── Confirm step — preview ─────────────────────────────── */
+.bc-preview {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  align-items: flex-start;
+}
+
+.bc-preview-img {
+  width: 80px;
+  height: auto;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.bc-preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.bc-preview-detail {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* ── Confirm step — fields ──────────────────────────────── */
+.bc-field-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.bc-field-label {
+  min-width: 80px;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.bc-field-select {
+  flex: 1;
+  padding: 0.35rem;
+}
+
+.bc-field-input {
+  flex: 1;
+  padding: 0.35rem;
+}
+
+.bc-valuation-wrap {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.bc-valuation-prefix {
+  padding: 0.35rem 0.5rem;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-weight: 500;
+  border-right: 1px solid var(--background-modifier-border);
+}
+
+.bc-valuation-input {
+  flex: 1;
+  padding: 0.35rem 0.5rem;
+  border: none;
+  background: transparent;
+  outline: none;
+}
+
+.bc-custom-divider {
+  margin: 0.75rem 0;
+}
+
+/* ── Toggle switch ──────────────────────────────────────── */
+.bc-toggle-outer {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.bc-toggle-input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.bc-toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--background-modifier-border);
+  border-radius: 22px;
+  transition: background 0.2s;
+}
+
+.bc-toggle-slider.is-on {
+  background: var(--interactive-accent);
+}
+
+.bc-toggle-knob {
+  position: absolute;
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.bc-toggle-slider.is-on .bc-toggle-knob {
+  transform: translateX(18px);
+}
+
+/* ── Button rows ────────────────────────────────────────── */
+.bc-btn-row {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1.25rem;
+}
+
+.bc-btn-primary {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  padding: 0.4rem 1rem;
+  border-radius: 4px;
+}
+
+.bc-btn-secondary {
+  padding: 0.4rem 1rem;
+}
+
+/* ── Duplicate step ─────────────────────────────────────── */
+.bc-dup-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.bc-dup-emoji {
+  font-size: 1.5rem;
+}
+
+.bc-copies-info {
+  background: var(--background-secondary);
+  border-radius: 6px;
+  padding: 0.65rem 0.9rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.9rem;
+}
+
+.bc-copies-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.bc-copies-label {
+  min-width: 110px;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.bc-copies-input {
+  flex: 1;
+  padding: 0.35rem;
+}
+
+.bc-btn-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.bc-btn-full {
+  width: 100%;
+  padding: 0.5rem;
+}
+
+.bc-btn-full-primary {
+  width: 100%;
+  padding: 0.5rem;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-radius: 4px;
+}
+
+/* ── Reorganize modal ───────────────────────────────────── */
+.bc-reorg-hint {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-bottom: 1.25rem;
+}
+
+.bc-target-box {
+  background: var(--background-secondary);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.85rem;
+}
+
+.bc-target-heading {
+  font-weight: 600;
+  margin: 0 0 0.4rem;
+}
+
+.bc-target-path {
+  margin: 0 0 0.2rem;
+  color: var(--text-muted);
+}
+
+.bc-target-path-last {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.bc-results-area {
+  min-height: 2rem;
+  margin-bottom: 1rem;
+}
+
+.bc-reorg-btn-row {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.bc-reorg-cancel-btn {
+  flex: 1;
+  padding: 0.5rem;
+}
+
+.bc-reorg-scan-btn {
+  flex: 1;
+  padding: 0.5rem;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-radius: 4px;
+}
+
+.bc-result-box {
+  background: var(--background-secondary);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+}
+
+.bc-result-box-heading {
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.bc-folder-row {
+  margin-bottom: 0.3rem;
+}
+
+.bc-folder-name {
+  color: var(--text-muted);
+}
+
+.bc-folder-name.is-ok {
+  color: var(--color-green);
+  font-weight: 500;
+}
+
+.bc-folder-ok-badge {
+  color: var(--color-green);
+  font-size: 0.8rem;
+}
+
+.bc-base-path {
+  margin: 0.5rem 0 0;
+  color: var(--text-muted);
+}
+
+.bc-all-ok {
+  margin: 0.75rem 0 0;
+  font-weight: 600;
+  color: var(--color-green);
+}
+
+.bc-proceed-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.75rem;
+}
+
+.bc-proceed-btn {
+  padding: 0.4rem 1rem;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-radius: 4px;
+}
+
+/* ── Confirm reorganize ─────────────────────────────────── */
+.bc-reorg-confirm-hint {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.bc-section-label {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.bc-tree-box {
+  background: var(--background-secondary);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  font-family: monospace;
+  font-size: 0.82rem;
+  margin-bottom: 0.75rem;
+  line-height: 1.8;
+}
+
+.bc-tree-item {
+  color: var(--text-muted);
+}
+
+.bc-tree-indent {
+  padding-left: 1.2rem;
+}
+
+.bc-tree-dest {
+  padding-left: 1.2rem;
+  color: var(--color-green);
+}
+
+.bc-summary-box {
+  background: var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.85rem;
+}
+
+.bc-summary-line {
+  margin: 0 0 0.2rem;
+}
+
+.bc-summary-line-last {
+  margin: 0;
+}
+
+.bc-confirm-btn-row {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+/* ── Settings ───────────────────────────────────────────── */
+.bc-path-preview {
+  background: var(--background-secondary);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+}
+
+.bc-path-line {
+  margin: 0 0 0.25rem;
+  color: var(--text-muted);
+}
+
+.bc-path-line-last {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.bc-field-list {
+  margin-bottom: 1rem;
+}
+
+.bc-field-empty {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+.bc-field-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  margin-bottom: 0.3rem;
+  background: var(--background-secondary);
+}
+
+.bc-field-name-wrap {
+  display: flex;
+  align-items: center;
+}
+
+.bc-field-name {
+  font-size: 0.9rem;
+}
+
+.bc-type-badge {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  margin-left: 0.5rem;
+}
+
+.bc-field-delete {
+  padding: 0.1rem 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.bc-add-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.bc-add-name-input {
+  flex: 1;
+  padding: 0.35rem;
+}
+
+.bc-add-type-select {
+  padding: 0.35rem;
+}
+
+.bc-add-btn {
+  padding: 0.35rem 0.75rem;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-radius: 4px;
+}

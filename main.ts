@@ -39,6 +39,59 @@ interface BookCatalogSettings {
   customFields: CustomField[];
 }
 
+// ─── Open Library API types ───────────────────────────────────────────────────
+
+interface OLAuthor { name: string; }
+interface OLContribution { name: string; role?: string; }
+interface OLPublisher { name: string; }
+interface OLCover { large?: string; medium?: string; }
+interface OLSubject { name?: string; }
+
+interface OLBookData {
+  title?: string;
+  authors?: OLAuthor[];
+  contributions?: OLContribution[];
+  publishers?: OLPublisher[];
+  publish_date?: string;
+  cover?: OLCover;
+  number_of_pages?: number;
+  subjects?: (string | OLSubject)[];
+}
+
+interface OLSearchDoc {
+  isbn?: string[];
+  title?: string;
+  author_name?: string[];
+  publisher?: string[];
+  first_publish_year?: number;
+  cover_i?: number;
+  subject?: string[];
+}
+
+// ─── Google Books API types ───────────────────────────────────────────────────
+
+interface GBImageLinks {
+  extraLarge?: string;
+  large?: string;
+  thumbnail?: string;
+  smallThumbnail?: string;
+}
+
+interface GBIdentifier { type: string; identifier: string; }
+
+interface GBVolumeInfo {
+  title?: string;
+  authors?: string[];
+  publisher?: string;
+  publishedDate?: string;
+  pageCount?: number;
+  categories?: string[];
+  imageLinks?: GBImageLinks;
+  industryIdentifiers?: GBIdentifier[];
+}
+
+interface GBVolume { volumeInfo: GBVolumeInfo; }
+
 // ─── Defaults ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_SETTINGS: BookCatalogSettings = {
@@ -176,25 +229,38 @@ export default class BookCatalogPlugin extends Plugin {
     this.addRibbonIcon("library", "Open Book Catalog", () => {
       const baseFile = this.findExistingBaseFile();
       if (baseFile) {
-        this.app.workspace.getLeaf(false).openFile(baseFile);
+        void this.app.workspace.getLeaf(false).openFile(baseFile);
       } else {
         new Notice("Book Catalog.base not found. Create it in Settings → Book Catalog.");
       }
     });
 
-    this.addRibbonIcon("book-plus", "Add Book", () => new ISBNModal(this.app, this).open());
+    this.addRibbonIcon("book-plus", "Add book", () => new ISBNModal(this.app, this).open());
 
-    this.addCommand({ id: "add-book-by-isbn", name: "Add book by ISBN", callback: () => new ISBNModal(this.app, this).open() });
-    this.addCommand({ id: "open-book-catalog", name: "Open Book Catalog", callback: () => {
-      const baseFile = this.findExistingBaseFile();
-      if (baseFile) this.app.workspace.getLeaf(false).openFile(baseFile);
-      else new Notice("Book Catalog.base not found. Create it in Settings → Book Catalog.");
-    }});
+    this.addCommand({
+      id: "add-by-isbn",
+      name: "Add by ISBN",
+      callback: () => new ISBNModal(this.app, this).open(),
+    });
+
+    this.addCommand({
+      id: "open-catalog",
+      name: "Open catalog",
+      callback: () => {
+        const baseFile = this.findExistingBaseFile();
+        if (baseFile) void this.app.workspace.getLeaf(false).openFile(baseFile);
+        else new Notice("Book Catalog.base not found. Create it in Settings → Book Catalog.");
+      },
+    });
 
     this.addSettingTab(new BookCatalogSettingTab(this.app, this));
   }
 
-  async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); if (!this.settings.customFields) this.settings.customFields = []; }
+  async loadSettings() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    if (!this.settings.customFields) this.settings.customFields = [];
+  }
+
   async saveSettings() { await this.saveData(this.settings); }
 
   async ensureFolder(path: string): Promise<void> {
@@ -227,8 +293,13 @@ export default class BookCatalogPlugin extends Plugin {
     const basePath = getBasePath(this.settings.baseFolder);
     const content = generateBaseContent(this.settings);
     const existing = this.app.vault.getAbstractFileByPath(basePath);
-    if (existing instanceof TFile) { await this.app.vault.modify(existing, content); new Notice("✅ Book Catalog.base updated."); }
-    else { await this.app.vault.create(basePath, content); new Notice("✅ Book Catalog.base created."); }
+    if (existing instanceof TFile) {
+      await this.app.vault.modify(existing, content);
+      new Notice("✅ Book Catalog.base updated.");
+    } else {
+      await this.app.vault.create(basePath, content);
+      new Notice("✅ Book Catalog.base created.");
+    }
   }
 
   async reorganizeFiles(bookNotes: TFile[]): Promise<void> {
@@ -260,20 +331,26 @@ export default class BookCatalogPlugin extends Plugin {
   async fetchOpenLibraryByISBN(isbn: string): Promise<BookData | null> {
     const url = `https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`;
     const response = await requestUrl({ url });
-    const data = response.json;
+    const data = response.json as Record<string, OLBookData>;
     const key = `ISBN:${isbn}`;
     if (!data[key]) return null;
     const book = data[key];
     return {
       isbn,
-      title: toTitleCase(book.title || "Unknown Title"),
-      authors: toTitleCaseNames((book.authors || []).map((a: any) => a.name)),
-      editors: toTitleCaseNames((book.contributions || []).filter((c: any) => c.role?.toLowerCase().includes("editor")).map((c: any) => c.name)),
-      publisher: book.publishers?.[0]?.name || "",
-      publishedYear: book.publish_date ? book.publish_date.split(" ").pop() : "",
-      coverUrl: book.cover?.large || book.cover?.medium || "",
-      pages: book.number_of_pages?.toString() || "",
-      subjects: (book.subjects || []).slice(0, 8).map((s: any) => s.name || s),
+      title: toTitleCase(book.title ?? "Unknown Title"),
+      authors: toTitleCaseNames((book.authors ?? []).map((a) => a.name)),
+      editors: toTitleCaseNames(
+        (book.contributions ?? [])
+          .filter((c) => c.role?.toLowerCase().includes("editor"))
+          .map((c) => c.name)
+      ),
+      publisher: book.publishers?.[0]?.name ?? "",
+      publishedYear: book.publish_date ? book.publish_date.split(" ").pop() ?? "" : "",
+      coverUrl: book.cover?.large ?? book.cover?.medium ?? "",
+      pages: book.number_of_pages?.toString() ?? "",
+      subjects: (book.subjects ?? []).slice(0, 8).map((s) =>
+        typeof s === "string" ? s : (s.name ?? "")
+      ),
     };
   }
 
@@ -281,19 +358,19 @@ export default class BookCatalogPlugin extends Plugin {
     let url = `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`;
     if (this.settings.googleBooksApiKey) url += `&key=${this.settings.googleBooksApiKey}`;
     const response = await requestUrl({ url });
-    const data = response.json;
+    const data = response.json as { items?: GBVolume[] };
     if (!data.items?.length) return null;
     const info = data.items[0].volumeInfo;
     return {
       isbn,
-      title: toTitleCase(info.title || "Unknown Title"),
-      authors: toTitleCaseNames(info.authors || []),
+      title: toTitleCase(info.title ?? "Unknown Title"),
+      authors: toTitleCaseNames(info.authors ?? []),
       editors: [],
-      publisher: info.publisher || "",
+      publisher: info.publisher ?? "",
       publishedYear: info.publishedDate ? info.publishedDate.substring(0, 4) : "",
-      coverUrl: info.imageLinks?.extraLarge || info.imageLinks?.large || info.imageLinks?.thumbnail || "",
-      pages: info.pageCount?.toString() || "",
-      subjects: (info.categories || []).slice(0, 8),
+      coverUrl: info.imageLinks?.extraLarge ?? info.imageLinks?.large ?? info.imageLinks?.thumbnail ?? "",
+      pages: info.pageCount?.toString() ?? "",
+      subjects: (info.categories ?? []).slice(0, 8),
     };
   }
 
@@ -302,7 +379,7 @@ export default class BookCatalogPlugin extends Plugin {
   async searchBooks(title: string, author: string): Promise<BookData[]> {
     const results: BookData[] = [];
     const seen = new Set<string>();
-    const dedupeKey = (b: BookData) => `${b.title.toLowerCase().trim()}|${(b.authors[0] || "").toLowerCase().trim()}`;
+    const dedupeKey = (b: BookData) => `${b.title.toLowerCase().trim()}|${(b.authors[0] ?? "").toLowerCase().trim()}`;
     const addResult = (b: BookData) => { const key = dedupeKey(b); if (!seen.has(key)) { seen.add(key); results.push(b); } };
     try { (await this.searchOpenLibrary(title, author)).forEach(addResult); } catch (e) { console.warn("Open Library search failed:", e); }
     try { (await this.searchGoogleBooks(title, author)).forEach(addResult); } catch (e) { console.warn("Google Books search failed:", e); }
@@ -314,17 +391,17 @@ export default class BookCatalogPlugin extends Plugin {
     if (author) url += `&author=${encodeURIComponent(author)}`;
     url += `&limit=8&fields=title,author_name,publisher,first_publish_year,isbn,cover_i,subject`;
     const response = await requestUrl({ url });
-    const data = response.json;
-    return (data.docs || []).map((doc: any): BookData => ({
-      isbn: doc.isbn?.[0] || "",
-      title: toTitleCase(doc.title || "Unknown Title"),
-      authors: toTitleCaseNames(doc.author_name || []),
+    const data = response.json as { docs?: OLSearchDoc[] };
+    return (data.docs ?? []).map((doc): BookData => ({
+      isbn: doc.isbn?.[0] ?? "",
+      title: toTitleCase(doc.title ?? "Unknown Title"),
+      authors: toTitleCaseNames(doc.author_name ?? []),
       editors: [],
-      publisher: doc.publisher?.[0] || "",
-      publishedYear: doc.first_publish_year?.toString() || "",
+      publisher: doc.publisher?.[0] ?? "",
+      publishedYear: doc.first_publish_year?.toString() ?? "",
       coverUrl: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` : "",
       pages: "",
-      subjects: (doc.subject || []).slice(0, 8),
+      subjects: (doc.subject ?? []).slice(0, 8),
     }));
   }
 
@@ -334,19 +411,22 @@ export default class BookCatalogPlugin extends Plugin {
     let url = `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=8`;
     if (this.settings.googleBooksApiKey) url += `&key=${this.settings.googleBooksApiKey}`;
     const response = await requestUrl({ url });
-    const data = response.json;
-    return (data.items || []).map((item: any): BookData => {
+    const data = response.json as { items?: GBVolume[] };
+    return (data.items ?? []).map((item): BookData => {
       const info = item.volumeInfo;
-      const isbn = info.industryIdentifiers?.find((id: any) => id.type === "ISBN_13")?.identifier
-        || info.industryIdentifiers?.find((id: any) => id.type === "ISBN_10")?.identifier || "";
+      const isbn =
+        info.industryIdentifiers?.find((id) => id.type === "ISBN_13")?.identifier ??
+        info.industryIdentifiers?.find((id) => id.type === "ISBN_10")?.identifier ?? "";
       return {
-        isbn, title: toTitleCase(info.title || "Unknown Title"),
-        authors: toTitleCaseNames(info.authors || []), editors: [],
-        publisher: info.publisher || "",
+        isbn,
+        title: toTitleCase(info.title ?? "Unknown Title"),
+        authors: toTitleCaseNames(info.authors ?? []),
+        editors: [],
+        publisher: info.publisher ?? "",
         publishedYear: info.publishedDate ? info.publishedDate.substring(0, 4) : "",
-        coverUrl: info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || "",
-        pages: info.pageCount?.toString() || "",
-        subjects: (info.categories || []).slice(0, 8),
+        coverUrl: info.imageLinks?.thumbnail ?? info.imageLinks?.smallThumbnail ?? "",
+        pages: info.pageCount?.toString() ?? "",
+        subjects: (info.categories ?? []).slice(0, 8),
       };
     });
   }
@@ -378,7 +458,7 @@ export default class BookCatalogPlugin extends Plugin {
     new Notice(`✅ Copies updated to ${newCount}.`);
   }
 
-  openNote(file: TFile): void { this.app.workspace.getLeaf(false).openFile(file); }
+  openNote(file: TFile): void { void this.app.workspace.getLeaf(false).openFile(file); }
 
   generateNoteContent(book: BookData, condition: string, acquired: string, valuation: string, copies: string, customValues: Record<string, string> = {}): string {
     const coverLine = book.coverUrl ? `\n<img src="${book.coverUrl}" alt="cover" width="150"/>\n` : "";
@@ -424,81 +504,124 @@ class ReorganizeModal extends Modal {
   showScanStep() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "Reorganize Catalog Files" });
-    contentEl.createEl("p", { text: "Scan your vault to find all book notes regardless of where they currently live." }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin-bottom:1.25rem;";
-    const targetEl = contentEl.createDiv();
-    targetEl.style.cssText = "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; margin-bottom:1.25rem; font-size:0.85rem;";
-    targetEl.createEl("p", { text: "Target location (from your settings):" }).style.cssText = "font-weight:600; margin:0 0 0.4rem;";
-    targetEl.createEl("p", { text: `📄 ${getBasePath(this.plugin.settings.baseFolder)}` }).style.cssText = "margin:0 0 0.2rem; color:var(--text-muted);";
-    targetEl.createEl("p", { text: `📚 ${getNotesFolder(this.plugin.settings)}/` }).style.cssText = "margin:0; color:var(--text-muted);";
-    const resultsEl = contentEl.createDiv(); resultsEl.style.cssText = "min-height:2rem; margin-bottom:1rem;";
-    const btnRow = contentEl.createDiv(); btnRow.style.cssText = "display:flex; gap:0.75rem;";
-    const cancelBtn = btnRow.createEl("button", { text: "Cancel" }); cancelBtn.style.cssText = "flex:1; padding:0.5rem;";
-    const scanBtn = btnRow.createEl("button", { text: "🔍  Scan Vault" }); scanBtn.style.cssText = "flex:1; padding:0.5rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
+    contentEl.createEl("h2", { text: "Reorganize catalog files" });
+    contentEl.createEl("p", { cls: "bc-reorg-hint", text: "Scan your vault to find all book notes regardless of where they currently live." });
+
+    const targetEl = contentEl.createDiv({ cls: "bc-target-box" });
+    targetEl.createEl("p", { cls: "bc-target-heading", text: "Target location (from your settings):" });
+    targetEl.createEl("p", { cls: "bc-target-path", text: `📄 ${getBasePath(this.plugin.settings.baseFolder)}` });
+    targetEl.createEl("p", { cls: "bc-target-path-last", text: `📚 ${getNotesFolder(this.plugin.settings)}/` });
+
+    const resultsEl = contentEl.createDiv({ cls: "bc-results-area" });
+    const btnRow = contentEl.createDiv({ cls: "bc-reorg-btn-row" });
+    const cancelBtn = btnRow.createEl("button", { cls: "bc-reorg-cancel-btn", text: "Cancel" });
+    const scanBtn = btnRow.createEl("button", { cls: "bc-reorg-scan-btn", text: "🔍  Scan vault" });
+
     cancelBtn.addEventListener("click", () => this.close());
     scanBtn.addEventListener("click", () => {
-      scanBtn.disabled = true; scanBtn.setText("Scanning..."); resultsEl.empty();
+      scanBtn.disabled = true;
+      scanBtn.setText("Scanning...");
+      resultsEl.empty();
+
       const bookNotes = this.plugin.scanVaultForBookNotes();
       const newNotesFolder = getNotesFolder(this.plugin.settings);
       const notesToMove = bookNotes.filter((f) => f.path !== `${newNotesFolder}/${f.name}`);
       const existingBase = this.plugin.findExistingBaseFile();
       const newBasePath = getBasePath(this.plugin.settings.baseFolder);
       const baseNeedsMove = !!(existingBase && existingBase.path !== newBasePath);
-      const resultBox = resultsEl.createDiv(); resultBox.style.cssText = "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; font-size:0.85rem;";
-      resultBox.createEl("p", { text: `✅ Scan complete — found ${bookNotes.length} book note${bookNotes.length !== 1 ? "s" : ""} in your vault.` }).style.cssText = "font-weight:600; margin:0 0 0.5rem;";
-      if (bookNotes.length === 0) { resultBox.createEl("p", { text: 'No book notes found. Make sure your notes have tags: ["book"] in their frontmatter.' }).style.cssText = "color:var(--text-muted); margin:0;"; scanBtn.disabled = false; scanBtn.setText("🔍  Scan Vault"); return; }
+
+      const resultBox = resultsEl.createDiv({ cls: "bc-result-box" });
+      resultBox.createEl("p", { cls: "bc-result-box-heading", text: `✅ Scan complete — found ${bookNotes.length} book note${bookNotes.length !== 1 ? "s" : ""} in your vault.` });
+
+      if (bookNotes.length === 0) {
+        resultBox.createEl("p", { cls: "bc-folder-name", text: 'No book notes found. Make sure your notes have tags: ["book"] in their frontmatter.' });
+        scanBtn.disabled = false;
+        scanBtn.setText("🔍  Scan vault");
+        return;
+      }
+
       const byFolder = new Map<string, TFile[]>();
-      for (const f of bookNotes) { const folder = f.parent?.path ?? "(root)"; if (!byFolder.has(folder)) byFolder.set(folder, []); byFolder.get(folder)!.push(f); }
+      for (const f of bookNotes) {
+        const folder = f.parent?.path ?? "(root)";
+        if (!byFolder.has(folder)) byFolder.set(folder, []);
+        byFolder.get(folder)!.push(f);
+      }
+
       byFolder.forEach((files, folder) => {
         const alreadyInPlace = folder === newNotesFolder;
-        const folderEl = resultBox.createDiv(); folderEl.style.cssText = "margin-bottom:0.3rem;";
-        folderEl.createEl("span", { text: `📁 ${folder}/ — ${files.length} note${files.length !== 1 ? "s" : ""}` }).style.cssText = alreadyInPlace ? "color:var(--color-green); font-weight:500;" : "color:var(--text-muted);";
-        if (alreadyInPlace) folderEl.createEl("span", { text: " ✓ already in target" }).style.cssText = "color:var(--color-green); font-size:0.8rem;";
+        const folderEl = resultBox.createDiv({ cls: "bc-folder-row" });
+        const nameEl = folderEl.createEl("span", { text: `📁 ${folder}/ — ${files.length} note${files.length !== 1 ? "s" : ""}` });
+        nameEl.addClass(alreadyInPlace ? "bc-folder-name is-ok" : "bc-folder-name");
+        if (alreadyInPlace) folderEl.createEl("span", { cls: "bc-folder-ok-badge", text: " ✓ already in target" });
       });
-      if (existingBase) resultBox.createEl("p", { text: `📄 Book Catalog.base: ${existingBase.path}` }).style.cssText = "margin:0.5rem 0 0; color:var(--text-muted);";
-      if (notesToMove.length === 0 && !baseNeedsMove) { resultBox.createEl("p", { text: "✅ Everything is already in the correct location." }).style.cssText = "margin:0.75rem 0 0; font-weight:600; color:var(--color-green);"; scanBtn.disabled = false; scanBtn.setText("🔍  Scan Again"); return; }
-      const proceedRow = resultsEl.createDiv(); proceedRow.style.cssText = "display:flex; justify-content:flex-end; margin-top:0.75rem;";
-      const proceedBtn = proceedRow.createEl("button", { text: `Review ${notesToMove.length} move${notesToMove.length !== 1 ? "s" : ""} →` });
-      proceedBtn.style.cssText = "padding:0.4rem 1rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
+
+      if (existingBase) resultBox.createEl("p", { cls: "bc-base-path", text: `📄 Book Catalog.base: ${existingBase.path}` });
+
+      if (notesToMove.length === 0 && !baseNeedsMove) {
+        resultBox.createEl("p", { cls: "bc-all-ok", text: "✅ Everything is already in the correct location." });
+        scanBtn.disabled = false;
+        scanBtn.setText("🔍  Scan again");
+        return;
+      }
+
+      const proceedRow = resultsEl.createDiv({ cls: "bc-proceed-row" });
+      const proceedBtn = proceedRow.createEl("button", { cls: "bc-proceed-btn", text: `Review ${notesToMove.length} move${notesToMove.length !== 1 ? "s" : ""} →` });
       proceedBtn.addEventListener("click", () => this.showConfirmStep(bookNotes, notesToMove, existingBase, baseNeedsMove));
-      scanBtn.disabled = false; scanBtn.setText("🔍  Scan Again");
+      scanBtn.disabled = false;
+      scanBtn.setText("🔍  Scan again");
     });
   }
 
   showConfirmStep(allNotes: TFile[], notesToMove: TFile[], existingBase: TFile | null, baseNeedsMove: boolean) {
-    const { contentEl } = this; contentEl.empty();
-    const s = this.plugin.settings; const newNotesFolder = getNotesFolder(s); const newBasePath = getBasePath(s.baseFolder);
-    contentEl.createEl("h2", { text: "Confirm Reorganization" });
-    contentEl.createEl("p", { text: "Review the changes below before confirming." }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;";
-    const treeStyle = "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; font-family:monospace; font-size:0.82rem; margin-bottom:0.75rem; line-height:1.8;";
+    const { contentEl } = this;
+    contentEl.empty();
+    const s = this.plugin.settings;
+    const newNotesFolder = getNotesFolder(s);
+    const newBasePath = getBasePath(s.baseFolder);
+
+    contentEl.createEl("h2", { text: "Confirm reorganization" });
+    contentEl.createEl("p", { cls: "bc-reorg-confirm-hint", text: "Review the changes below before confirming." });
+
     if (notesToMove.length > 0) {
-      contentEl.createEl("p", { text: "Book notes to move:" }).style.cssText = "font-weight:600; margin-bottom:0.25rem;";
-      const notesBox = contentEl.createDiv(); notesBox.style.cssText = treeStyle;
+      contentEl.createEl("p", { cls: "bc-section-label", text: "Book notes to move:" });
+      const notesBox = contentEl.createDiv({ cls: "bc-tree-box" });
       const byFolder = new Map<string, TFile[]>();
-      for (const f of notesToMove) { const folder = f.parent?.path ?? "(root)"; if (!byFolder.has(folder)) byFolder.set(folder, []); byFolder.get(folder)!.push(f); }
+      for (const f of notesToMove) {
+        const folder = f.parent?.path ?? "(root)";
+        if (!byFolder.has(folder)) byFolder.set(folder, []);
+        byFolder.get(folder)!.push(f);
+      }
       byFolder.forEach((files, folder) => {
         notesBox.createEl("div", { text: `📁 ${folder}/` });
-        const indent = notesBox.createDiv(); indent.style.cssText = "padding-left:1.2rem;";
-        files.slice(0, 4).forEach((f) => indent.createEl("div", { text: `📝 ${f.name}` }).style.cssText = "color:var(--text-muted);");
-        if (files.length > 4) indent.createEl("div", { text: `… and ${files.length - 4} more` }).style.cssText = "color:var(--text-muted);";
-        notesBox.createEl("div", { text: `↳ → ${newNotesFolder}/` }).style.cssText = "padding-left:1.2rem; color:var(--color-green);";
+        const indent = notesBox.createDiv({ cls: "bc-tree-indent" });
+        files.slice(0, 4).forEach((f) => indent.createEl("div", { cls: "bc-tree-item", text: `📝 ${f.name}` }));
+        if (files.length > 4) indent.createEl("div", { cls: "bc-tree-item", text: `… and ${files.length - 4} more` });
+        notesBox.createEl("div", { cls: "bc-tree-dest", text: `↳ → ${newNotesFolder}/` });
       });
     }
+
     if (baseNeedsMove && existingBase) {
-      contentEl.createEl("p", { text: "Base file to move:" }).style.cssText = "font-weight:600; margin-bottom:0.25rem;";
-      const baseBox = contentEl.createDiv(); baseBox.style.cssText = treeStyle;
-      baseBox.createEl("div", { text: `📄 ${existingBase.path}` }).style.cssText = "color:var(--text-muted);";
-      baseBox.createEl("div", { text: `↳ → ${newBasePath}` }).style.cssText = "color:var(--color-green);";
+      contentEl.createEl("p", { cls: "bc-section-label", text: "Base file to move:" });
+      const baseBox = contentEl.createDiv({ cls: "bc-tree-box" });
+      baseBox.createEl("div", { cls: "bc-tree-item", text: `📄 ${existingBase.path}` });
+      baseBox.createEl("div", { cls: "bc-tree-dest", text: `↳ → ${newBasePath}` });
     }
-    const summaryEl = contentEl.createDiv(); summaryEl.style.cssText = "background:var(--background-modifier-border); border-radius:6px; padding:0.6rem 0.9rem; margin-bottom:1.25rem; font-size:0.85rem;";
-    summaryEl.createEl("p", { text: `📚 ${notesToMove.length} note${notesToMove.length !== 1 ? "s" : ""} → ${newNotesFolder}/` }).style.cssText = "margin:0 0 0.2rem;";
-    if (baseNeedsMove) summaryEl.createEl("p", { text: `📄 Base → ${newBasePath}` }).style.cssText = "margin:0 0 0.2rem;";
-    summaryEl.createEl("p", { text: "📄 Book Catalog.base will be regenerated with updated paths." }).style.cssText = "margin:0;";
-    const btnRow = contentEl.createDiv(); btnRow.style.cssText = "display:flex; gap:0.75rem; justify-content:flex-end;";
-    const backBtn = btnRow.createEl("button", { text: "← Back" }); backBtn.style.cssText = "padding:0.4rem 1rem;";
-    const confirmBtn = btnRow.createEl("button", { text: "Confirm & Move Files" }); confirmBtn.style.cssText = "background:var(--interactive-accent); color:var(--text-on-accent); padding:0.4rem 1rem; border-radius:4px;";
+
+    const summaryEl = contentEl.createDiv({ cls: "bc-summary-box" });
+    summaryEl.createEl("p", { cls: "bc-summary-line", text: `📚 ${notesToMove.length} note${notesToMove.length !== 1 ? "s" : ""} → ${newNotesFolder}/` });
+    if (baseNeedsMove) summaryEl.createEl("p", { cls: "bc-summary-line", text: `📄 Base → ${newBasePath}` });
+    summaryEl.createEl("p", { cls: "bc-summary-line-last", text: "📄 Book Catalog.base will be regenerated with updated paths." });
+
+    const btnRow = contentEl.createDiv({ cls: "bc-confirm-btn-row" });
+    const backBtn = btnRow.createEl("button", { cls: "bc-btn-secondary", text: "← Back" });
+    const confirmBtn = btnRow.createEl("button", { cls: "bc-btn-primary", text: "Confirm & move files" });
+
     backBtn.addEventListener("click", () => this.showScanStep());
-    confirmBtn.addEventListener("click", async () => { confirmBtn.disabled = true; confirmBtn.setText("Moving files..."); await this.plugin.reorganizeFiles(allNotes); this.close(); });
+    confirmBtn.addEventListener("click", () => {
+      confirmBtn.disabled = true;
+      confirmBtn.setText("Moving files...");
+      void this.plugin.reorganizeFiles(allNotes).then(() => this.close());
+    });
   }
 
   onClose() { this.contentEl.empty(); }
@@ -514,80 +637,96 @@ class ISBNModal extends Modal {
   showScanStep() {
     const { contentEl } = this;
     contentEl.empty();
+    contentEl.createEl("h2", { text: "Add book" });
 
-    contentEl.createEl("h2", { text: "Add Book" });
-
-    const tabBar = contentEl.createDiv();
-    tabBar.style.cssText = "display:flex; gap:0.5rem; margin-bottom:1.25rem;";
-    const barcodeBtn = tabBar.createEl("button", { text: "📷  Scan / ISBN" });
-    const searchBtn  = tabBar.createEl("button", { text: "🔍  Search by Title" });
-    const activeStyle   = "flex:1; padding:0.4rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px; font-weight:500; cursor:pointer;";
-    const inactiveStyle = "flex:1; padding:0.4rem; background:var(--background-secondary); border-radius:4px; cursor:pointer;";
+    const tabBar = contentEl.createDiv({ cls: "bc-tab-bar" });
+    const barcodeBtn = tabBar.createEl("button", { cls: "bc-tab-btn is-active", text: "📷  Scan / ISBN" });
+    const searchBtn  = tabBar.createEl("button", { cls: "bc-tab-btn", text: "🔍  Search by title" });
     const tabContent = contentEl.createDiv();
 
     const renderBarcodeTab = () => {
-      barcodeBtn.style.cssText = activeStyle; searchBtn.style.cssText = inactiveStyle;
+      barcodeBtn.addClass("is-active"); barcodeBtn.removeClass("bc-tab-btn");
+      searchBtn.removeClass("is-active");
+      barcodeBtn.className = "bc-tab-btn is-active";
+      searchBtn.className = "bc-tab-btn";
       tabContent.empty();
-      tabContent.createEl("p", { text: "Scan the barcode with a USB scanner, or type the ISBN manually." }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin:0 0 0.75rem;";
+
+      tabContent.createEl("p", { cls: "bc-hint", text: "Scan the barcode with a USB scanner, or type the ISBN manually." });
+
       const inputEl = tabContent.createEl("input", { type: "text", placeholder: "ISBN / barcode..." });
-      inputEl.style.cssText = "width:100%; margin-bottom:0.75rem; font-size:1.1rem; padding:0.5rem;";
+      inputEl.addClass("bc-isbn-input");
       setTimeout(() => inputEl.focus(), 50);
-      const statusEl = tabContent.createEl("p", { text: "" });
-      statusEl.style.cssText = "color:var(--text-muted); min-height:1.5rem; margin:0 0 0.75rem;";
-      const lookupBtn = tabContent.createEl("button", { text: "Look Up Book" });
-      lookupBtn.style.cssText = "width:100%; padding:0.5rem;";
+
+      const statusEl = tabContent.createEl("p", { cls: "bc-status", text: "" });
+      const lookupBtn = tabContent.createEl("button", { cls: "bc-lookup-btn", text: "Look up book" });
+
       const doLookup = async (isbn: string) => {
         if (!isbn) { statusEl.setText("Please enter an ISBN."); return; }
-        lookupBtn.disabled = true; inputEl.disabled = true; statusEl.setText("Looking up book...");
+        lookupBtn.disabled = true;
+        inputEl.disabled = true;
+        statusEl.setText("Looking up book...");
         const book = await this.plugin.lookupISBN(isbn);
         if (!book) {
           statusEl.setText("❌ No book found. Check the number and try again.");
-          lookupBtn.disabled = false; inputEl.disabled = false; inputEl.focus(); return;
+          lookupBtn.disabled = false;
+          inputEl.disabled = false;
+          inputEl.focus();
+          return;
         }
         const existing = this.plugin.findExistingNote(book);
         if (existing) { this.showDuplicateStep(book, existing); return; }
         this.showConfirmStep(book);
       };
-      inputEl.addEventListener("keydown", (e) => { if (e.key === "Enter") doLookup(inputEl.value.trim()); });
-      lookupBtn.addEventListener("click", () => doLookup(inputEl.value.trim()));
+
+      inputEl.addEventListener("keydown", (e) => { if (e.key === "Enter") void doLookup(inputEl.value.trim()); });
+      lookupBtn.addEventListener("click", () => void doLookup(inputEl.value.trim()));
     };
 
     const renderSearchTab = () => {
-      barcodeBtn.style.cssText = inactiveStyle; searchBtn.style.cssText = activeStyle;
+      barcodeBtn.className = "bc-tab-btn";
+      searchBtn.className = "bc-tab-btn is-active";
       tabContent.empty();
-      tabContent.createEl("p", { text: "Search by title and optionally author. Title is required." }).style.cssText = "color:var(--text-muted); font-size:0.9rem; margin:0 0 0.75rem;";
-      const rowStyle   = "display:flex; align-items:center; gap:0.75rem; margin-bottom:0.6rem;";
-      const labelStyle = "min-width:60px; font-weight:500; font-size:0.9rem;";
-      const titleWrap = tabContent.createDiv(); titleWrap.style.cssText = rowStyle;
-      titleWrap.createEl("label", { text: "Title *" }).style.cssText = labelStyle;
-      const titleEl = titleWrap.createEl("input", { type: "text", placeholder: "Required" });
-      titleEl.style.cssText = "flex:1; padding:0.35rem;";
+
+      tabContent.createEl("p", { cls: "bc-hint", text: "Search by title and optionally author. Title is required." });
+
+      const titleRow = tabContent.createDiv({ cls: "bc-form-row" });
+      titleRow.createEl("label", { cls: "bc-form-label", text: "Title *" });
+      const titleEl = titleRow.createEl("input", { type: "text", placeholder: "Required" });
+      titleEl.addClass("bc-form-input");
       setTimeout(() => titleEl.focus(), 50);
-      const authorWrap = tabContent.createDiv(); authorWrap.style.cssText = rowStyle + " margin-bottom:0.9rem;";
-      authorWrap.createEl("label", { text: "Author" }).style.cssText = labelStyle;
-      const authorEl = authorWrap.createEl("input", { type: "text", placeholder: "Optional" });
-      authorEl.style.cssText = "flex:1; padding:0.35rem;";
-      const statusEl = tabContent.createEl("p", { text: "" });
-      statusEl.style.cssText = "color:var(--text-muted); min-height:1.2rem; margin:0 0 0.5rem; font-size:0.85rem;";
-      const searchActionBtn = tabContent.createEl("button", { text: "Search Books" });
-      searchActionBtn.style.cssText = "width:100%; padding:0.5rem; margin-bottom:0.75rem;";
+
+      const authorRow = tabContent.createDiv({ cls: "bc-form-row-last" });
+      authorRow.createEl("label", { cls: "bc-form-label", text: "Author" });
+      const authorEl = authorRow.createEl("input", { type: "text", placeholder: "Optional" });
+      authorEl.addClass("bc-form-input");
+
+      const statusEl = tabContent.createEl("p", { cls: "bc-status-search", text: "" });
+      const searchActionBtn = tabContent.createEl("button", { cls: "bc-search-btn", text: "Search books" });
       const resultsEl = tabContent.createDiv();
+
       const renderResults = (books: BookData[]) => {
         resultsEl.empty();
-        if (books.length === 0) { resultsEl.createEl("p", { text: "No results found. Try different search terms." }).style.cssText = "color:var(--text-muted); font-size:0.9rem;"; return; }
-        resultsEl.createEl("p", { text: `${books.length} result${books.length !== 1 ? "s" : ""} — click to select` }).style.cssText = "font-size:0.8rem; color:var(--text-muted); margin-bottom:0.5rem;";
+        if (books.length === 0) {
+          resultsEl.createEl("p", { cls: "bc-hint", text: "No results found. Try different search terms." });
+          return;
+        }
+        resultsEl.createEl("p", { cls: "bc-result-count", text: `${books.length} result${books.length !== 1 ? "s" : ""} — click to select` });
         books.forEach((book) => {
-          const card = resultsEl.createDiv();
-          card.style.cssText = "display:flex; gap:0.65rem; padding:0.6rem; border-radius:6px; border:1px solid var(--background-modifier-border); margin-bottom:0.4rem; cursor:pointer; align-items:flex-start;";
-          if (book.coverUrl) { const img = card.createEl("img"); img.src = book.coverUrl; img.alt = "cover"; img.style.cssText = "width:40px; height:auto; border-radius:3px; flex-shrink:0;"; }
-          else { const ph = card.createDiv(); ph.style.cssText = "width:40px; height:54px; background:var(--background-secondary); border-radius:3px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:1.2rem;"; ph.createEl("span", { text: "📖" }); }
-          const info = card.createDiv(); info.style.cssText = "flex:1; min-width:0;";
-          info.createEl("div", { text: book.title }).style.cssText = "font-weight:600; font-size:0.9rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;";
-          if (book.authors.length > 0) info.createEl("div", { text: book.authors.join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.82rem;";
+          const card = resultsEl.createDiv({ cls: "bc-result-card" });
+          if (book.coverUrl) {
+            const img = card.createEl("img");
+            img.src = book.coverUrl;
+            img.alt = "cover";
+            img.addClass("bc-result-thumb");
+          } else {
+            const ph = card.createDiv({ cls: "bc-result-thumb-placeholder" });
+            ph.createEl("span", { text: "📖" });
+          }
+          const info = card.createDiv({ cls: "bc-result-info" });
+          info.createEl("div", { cls: "bc-result-title", text: book.title });
+          if (book.authors.length > 0) info.createEl("div", { cls: "bc-result-meta", text: book.authors.join(", ") });
           const meta = [book.publisher, book.publishedYear].filter(Boolean).join(", ");
-          if (meta) info.createEl("div", { text: meta }).style.cssText = "color:var(--text-muted); font-size:0.82rem;";
-          card.addEventListener("mouseenter", () => { card.style.background = "var(--background-secondary)"; });
-          card.addEventListener("mouseleave", () => { card.style.background = ""; });
+          if (meta) info.createEl("div", { cls: "bc-result-meta", text: meta });
           card.addEventListener("click", () => {
             const existing = this.plugin.findExistingNote(book);
             if (existing) { this.showDuplicateStep(book, existing); return; }
@@ -595,17 +734,31 @@ class ISBNModal extends Modal {
           });
         });
       };
+
       const doSearch = async () => {
         const title = titleEl.value.trim();
-        if (!title) { statusEl.setText("Please enter a title."); statusEl.style.color = "var(--color-red)"; titleEl.focus(); return; }
-        statusEl.style.color = "var(--text-muted)"; searchActionBtn.disabled = true; searchActionBtn.setText("Searching..."); statusEl.setText("Searching…"); resultsEl.empty();
+        if (!title) {
+          statusEl.setText("Please enter a title.");
+          statusEl.addClass("is-error");
+          titleEl.focus();
+          return;
+        }
+        statusEl.removeClass("is-error");
+        searchActionBtn.disabled = true;
+        searchActionBtn.setText("Searching...");
+        statusEl.setText("Searching…");
+        resultsEl.empty();
         const books = await this.plugin.searchBooks(title, authorEl.value.trim());
-        statusEl.setText(""); searchActionBtn.disabled = false; searchActionBtn.setText("Search Books");
+        statusEl.setText("");
+        searchActionBtn.disabled = false;
+        searchActionBtn.setText("Search books");
         renderResults(books);
       };
-      const onEnter = (e: KeyboardEvent) => { if (e.key === "Enter") doSearch(); };
-      titleEl.addEventListener("keydown", onEnter); authorEl.addEventListener("keydown", onEnter);
-      searchActionBtn.addEventListener("click", doSearch);
+
+      const onEnter = (e: KeyboardEvent) => { if (e.key === "Enter") void doSearch(); };
+      titleEl.addEventListener("keydown", onEnter);
+      authorEl.addEventListener("keydown", onEnter);
+      searchActionBtn.addEventListener("click", () => void doSearch());
     };
 
     barcodeBtn.addEventListener("click", renderBarcodeTab);
@@ -614,96 +767,139 @@ class ISBNModal extends Modal {
   }
 
   showDuplicateStep(book: BookData, existing: TFile) {
-    const { contentEl } = this; contentEl.empty();
-    const headerEl = contentEl.createDiv(); headerEl.style.cssText = "display:flex; align-items:center; gap:0.5rem; margin-bottom:1rem;";
-    headerEl.createEl("span", { text: "📚" }).style.fontSize = "1.5rem";
-    headerEl.createEl("h2", { text: "Already in your catalog" }).style.margin = "0";
-    const previewEl = contentEl.createDiv(); previewEl.style.cssText = "display:flex; gap:1rem; margin-bottom:1.25rem; align-items:flex-start;";
-    if (book.coverUrl) { const imgEl = previewEl.createEl("img"); imgEl.src = book.coverUrl; imgEl.alt = "cover"; imgEl.style.cssText = "width:80px; height:auto; border-radius:4px; flex-shrink:0;"; }
-    const metaEl = previewEl.createDiv(); metaEl.style.cssText = "display:flex; flex-direction:column; gap:0.2rem;";
+    const { contentEl } = this;
+    contentEl.empty();
+
+    const headerEl = contentEl.createDiv({ cls: "bc-dup-header" });
+    headerEl.createEl("span", { cls: "bc-dup-emoji", text: "📚" });
+    headerEl.createEl("h2", { text: "Already in your catalog" });
+
+    const previewEl = contentEl.createDiv({ cls: "bc-preview" });
+    if (book.coverUrl) {
+      const imgEl = previewEl.createEl("img");
+      imgEl.src = book.coverUrl;
+      imgEl.alt = "cover";
+      imgEl.addClass("bc-preview-img");
+    }
+    const metaEl = previewEl.createDiv({ cls: "bc-preview-meta" });
     metaEl.createEl("strong", { text: book.title });
-    if (book.authors.length > 0) metaEl.createEl("span", { text: book.authors.join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
-    if (book.publisher || book.publishedYear) metaEl.createEl("span", { text: [book.publisher, book.publishedYear].filter(Boolean).join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
+    if (book.authors.length > 0) metaEl.createEl("span", { cls: "bc-preview-detail", text: book.authors.join(", ") });
+    if (book.publisher || book.publishedYear) metaEl.createEl("span", { cls: "bc-preview-detail", text: [book.publisher, book.publishedYear].filter(Boolean).join(", ") });
+
     const cache = this.plugin.app.metadataCache.getFileCache(existing);
     const currentCopies: number = cache?.frontmatter?.copies ?? 1;
-    const copiesInfoEl = contentEl.createDiv();
-    copiesInfoEl.style.cssText = "background:var(--background-secondary); border-radius:6px; padding:0.65rem 0.9rem; margin-bottom:1.25rem; font-size:0.9rem;";
+    const copiesInfoEl = contentEl.createDiv({ cls: "bc-copies-info" });
     copiesInfoEl.createEl("span", { text: "Currently in catalog: " });
     copiesInfoEl.createEl("strong", { text: `${currentCopies} cop${currentCopies === 1 ? "y" : "ies"}` });
-    contentEl.createEl("hr").style.marginBottom = "1rem";
-    const copiesWrap = contentEl.createDiv(); copiesWrap.style.cssText = "display:flex; align-items:center; gap:0.75rem; margin-bottom:1.25rem;";
-    copiesWrap.createEl("label", { text: "Update copies to" }).style.cssText = "min-width:110px; font-weight:500; font-size:0.9rem;";
-    const copiesEl = copiesWrap.createEl("input", { type: "number" }); copiesEl.value = String(currentCopies + 1); copiesEl.min = "1"; copiesEl.step = "1"; copiesEl.style.cssText = "flex:1; padding:0.35rem;";
-    const btnCol = contentEl.createDiv(); btnCol.style.cssText = "display:flex; flex-direction:column; gap:0.6rem;";
-    const updateBtn = btnCol.createEl("button", { text: "✅  Update Copies" }); updateBtn.style.cssText = "width:100%; padding:0.5rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
-    const openBtn  = btnCol.createEl("button", { text: "📖  Open Existing Note" }); openBtn.style.cssText = "width:100%; padding:0.5rem;";
-    const scanBtn  = btnCol.createEl("button", { text: "↩  Search Again" }); scanBtn.style.cssText = "width:100%; padding:0.5rem;";
-    updateBtn.addEventListener("click", async () => { const newCount = parseInt(copiesEl.value) || currentCopies + 1; updateBtn.disabled = true; updateBtn.setText("Saving..."); await this.plugin.updateCopies(existing, newCount); this.close(); });
+
+    contentEl.createEl("hr");
+
+    const copiesWrap = contentEl.createDiv({ cls: "bc-copies-row" });
+    copiesWrap.createEl("label", { cls: "bc-copies-label", text: "Update copies to" });
+    const copiesEl = copiesWrap.createEl("input", { type: "number" });
+    copiesEl.value = String(currentCopies + 1);
+    copiesEl.min = "1";
+    copiesEl.step = "1";
+    copiesEl.addClass("bc-copies-input");
+
+    const btnCol = contentEl.createDiv({ cls: "bc-btn-col" });
+    const updateBtn = btnCol.createEl("button", { cls: "bc-btn-full-primary", text: "✅  Update copies" });
+    const openBtn   = btnCol.createEl("button", { cls: "bc-btn-full", text: "📖  Open existing note" });
+    const scanBtn   = btnCol.createEl("button", { cls: "bc-btn-full", text: "↩  Search again" });
+
+    updateBtn.addEventListener("click", () => {
+      const newCount = parseInt(copiesEl.value) || currentCopies + 1;
+      updateBtn.disabled = true;
+      updateBtn.setText("Saving...");
+      void this.plugin.updateCopies(existing, newCount).then(() => this.close());
+    });
     openBtn.addEventListener("click", () => { this.plugin.openNote(existing); this.close(); });
     scanBtn.addEventListener("click", () => this.showScanStep());
   }
 
   showConfirmStep(book: BookData) {
-    const { contentEl } = this; contentEl.empty();
+    const { contentEl } = this;
+    contentEl.empty();
 
-    const previewEl = contentEl.createDiv(); previewEl.style.cssText = "display:flex; gap:1rem; margin-bottom:1.25rem; align-items:flex-start;";
-    if (book.coverUrl) { const imgEl = previewEl.createEl("img"); imgEl.src = book.coverUrl; imgEl.alt = "cover"; imgEl.style.cssText = "width:80px; height:auto; border-radius:4px; flex-shrink:0;"; }
-    const metaEl = previewEl.createDiv(); metaEl.style.cssText = "display:flex; flex-direction:column; gap:0.2rem;";
+    const previewEl = contentEl.createDiv({ cls: "bc-preview" });
+    if (book.coverUrl) {
+      const imgEl = previewEl.createEl("img");
+      imgEl.src = book.coverUrl;
+      imgEl.alt = "cover";
+      imgEl.addClass("bc-preview-img");
+    }
+    const metaEl = previewEl.createDiv({ cls: "bc-preview-meta" });
     metaEl.createEl("strong", { text: book.title });
-    if (book.authors.length > 0) metaEl.createEl("span", { text: book.authors.join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
-    if (book.publisher || book.publishedYear) metaEl.createEl("span", { text: [book.publisher, book.publishedYear].filter(Boolean).join(", ") }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
-    if (book.pages) metaEl.createEl("span", { text: `${book.pages} pages` }).style.cssText = "color:var(--text-muted); font-size:0.9rem;";
+    if (book.authors.length > 0) metaEl.createEl("span", { cls: "bc-preview-detail", text: book.authors.join(", ") });
+    if (book.publisher || book.publishedYear) metaEl.createEl("span", { cls: "bc-preview-detail", text: [book.publisher, book.publishedYear].filter(Boolean).join(", ") });
+    if (book.pages) metaEl.createEl("span", { cls: "bc-preview-detail", text: `${book.pages} pages` });
 
-    contentEl.createEl("hr").style.marginBottom = "1rem";
-
-    const rowStyle   = "display:flex; align-items:center; gap:0.75rem; margin-bottom:0.75rem;";
-    const labelStyle = "min-width:80px; font-weight:500;";
+    contentEl.createEl("hr");
 
     // ── Standard fields ───────────────────────────────────────────────────
-    const conditionWrap = contentEl.createDiv(); conditionWrap.style.cssText = rowStyle;
-    conditionWrap.createEl("label", { text: "Condition" }).style.cssText = labelStyle;
-    const conditionEl = conditionWrap.createEl("select"); conditionEl.style.cssText = "flex:1; padding:0.35rem;";
-    ["", "New", "Fine", "Very Good", "Good", "Fair", "Poor"].forEach((c) => { const opt = conditionEl.createEl("option", { text: c || "— select —" }); opt.value = c; });
+    const conditionRow = contentEl.createDiv({ cls: "bc-field-row" });
+    conditionRow.createEl("label", { cls: "bc-field-label", text: "Condition" });
+    const conditionEl = conditionRow.createEl("select");
+    conditionEl.addClass("bc-field-select");
+    ["", "New", "Fine", "Very Good", "Good", "Fair", "Poor"].forEach((c) => {
+      const opt = conditionEl.createEl("option", { text: c || "— select —" });
+      opt.value = c;
+    });
 
-    const acquiredWrap = contentEl.createDiv(); acquiredWrap.style.cssText = rowStyle;
-    acquiredWrap.createEl("label", { text: "Acquired" }).style.cssText = labelStyle;
-    const acquiredEl = acquiredWrap.createEl("input", { type: "date" }); acquiredEl.style.cssText = "flex:1; padding:0.35rem;"; acquiredEl.value = new Date().toISOString().split("T")[0];
+    const acquiredRow = contentEl.createDiv({ cls: "bc-field-row" });
+    acquiredRow.createEl("label", { cls: "bc-field-label", text: "Acquired" });
+    const acquiredEl = acquiredRow.createEl("input", { type: "date" });
+    acquiredEl.addClass("bc-field-input");
+    acquiredEl.value = new Date().toISOString().split("T")[0];
 
-    const copiesWrap = contentEl.createDiv(); copiesWrap.style.cssText = rowStyle;
-    copiesWrap.createEl("label", { text: "Copies" }).style.cssText = labelStyle;
-    const copiesEl = copiesWrap.createEl("input", { type: "number" }); copiesEl.value = "1"; copiesEl.min = "1"; copiesEl.step = "1"; copiesEl.style.cssText = "flex:1; padding:0.35rem;";
+    const copiesRow = contentEl.createDiv({ cls: "bc-field-row" });
+    copiesRow.createEl("label", { cls: "bc-field-label", text: "Copies" });
+    const copiesEl = copiesRow.createEl("input", { type: "number" });
+    copiesEl.addClass("bc-field-input");
+    copiesEl.value = "1";
+    copiesEl.min = "1";
+    copiesEl.step = "1";
 
-    const valuationWrap = contentEl.createDiv(); valuationWrap.style.cssText = rowStyle;
-    valuationWrap.createEl("label", { text: "Value (USD)" }).style.cssText = labelStyle;
-    const valuationPrefix = valuationWrap.createDiv(); valuationPrefix.style.cssText = "display:flex; align-items:center; flex:1; border:1px solid var(--background-modifier-border); border-radius:4px; overflow:hidden;";
-    valuationPrefix.createEl("span", { text: "$" }).style.cssText = "padding:0.35rem 0.5rem; background:var(--background-secondary); color:var(--text-muted); font-weight:500; border-right:1px solid var(--background-modifier-border);";
-    const valuationEl = valuationPrefix.createEl("input", { type: "number" }); valuationEl.placeholder = "0.00"; valuationEl.min = "0"; valuationEl.step = "0.01"; valuationEl.style.cssText = "flex:1; padding:0.35rem 0.5rem; border:none; background:transparent; outline:none;";
+    const valuationRow = contentEl.createDiv({ cls: "bc-field-row" });
+    valuationRow.createEl("label", { cls: "bc-field-label", text: "Value (USD)" });
+    const valuationWrap = valuationRow.createDiv({ cls: "bc-valuation-wrap" });
+    valuationWrap.createEl("span", { cls: "bc-valuation-prefix", text: "$" });
+    const valuationEl = valuationWrap.createEl("input", { type: "number" });
+    valuationEl.addClass("bc-valuation-input");
+    valuationEl.placeholder = "0.00";
+    valuationEl.min = "0";
+    valuationEl.step = "0.01";
 
     // ── Custom fields ─────────────────────────────────────────────────────
     const customGetters: Record<string, () => string> = {};
     if (this.plugin.settings.customFields.length > 0) {
-      contentEl.createEl("hr").style.cssText = "margin:0.75rem 0;";
+      contentEl.createEl("hr", { cls: "bc-custom-divider" });
       this.plugin.settings.customFields.forEach((field) => {
-        const wrap = contentEl.createDiv(); wrap.style.cssText = rowStyle;
-        wrap.createEl("label", { text: field.name }).style.cssText = labelStyle + " font-size:0.9rem;";
+        const wrap = contentEl.createDiv({ cls: "bc-field-row" });
+        wrap.createEl("label", { cls: "bc-field-label", text: field.name });
+
         if (field.type === "boolean") {
-          // Toggle switch
-          const toggleOuter = wrap.createDiv(); toggleOuter.style.cssText = "position:relative; width:40px; height:22px; flex-shrink:0;";
-          const toggleInput = toggleOuter.createEl("input", { type: "checkbox" }); toggleInput.style.cssText = "opacity:0; width:0; height:0; position:absolute;";
-          const slider = toggleOuter.createDiv(); slider.style.cssText = "position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background:var(--background-modifier-border); border-radius:22px; transition:background 0.2s;";
-          const knob = slider.createDiv(); knob.style.cssText = "position:absolute; height:16px; width:16px; left:3px; bottom:3px; background:white; border-radius:50%; transition:transform 0.2s;";
-          const sync = () => { slider.style.background = toggleInput.checked ? "var(--interactive-accent)" : "var(--background-modifier-border)"; knob.style.transform = toggleInput.checked ? "translateX(18px)" : "translateX(0)"; };
+          const toggleOuter = wrap.createDiv({ cls: "bc-toggle-outer" });
+          const toggleInput = toggleOuter.createEl("input", { type: "checkbox" });
+          toggleInput.addClass("bc-toggle-input");
+          const slider = toggleOuter.createDiv({ cls: "bc-toggle-slider" });
+          slider.createDiv({ cls: "bc-toggle-knob" });
+          const sync = () => { slider.toggleClass("is-on", toggleInput.checked); };
           toggleInput.addEventListener("change", sync);
           slider.addEventListener("click", () => { toggleInput.checked = !toggleInput.checked; sync(); });
           customGetters[field.id] = () => toggleInput.checked ? "true" : "false";
         } else if (field.type === "date") {
-          const el = wrap.createEl("input", { type: "date" }); el.style.cssText = "flex:1; padding:0.35rem;";
+          const el = wrap.createEl("input", { type: "date" });
+          el.addClass("bc-field-input");
           customGetters[field.id] = () => el.value;
         } else if (field.type === "number") {
-          const el = wrap.createEl("input", { type: "number" }); el.style.cssText = "flex:1; padding:0.35rem;"; el.step = "any";
+          const el = wrap.createEl("input", { type: "number" });
+          el.addClass("bc-field-input");
+          el.step = "any";
           customGetters[field.id] = () => el.value;
         } else {
-          const el = wrap.createEl("input", { type: "text" }); el.style.cssText = "flex:1; padding:0.35rem;";
+          const el = wrap.createEl("input", { type: "text" });
+          el.addClass("bc-field-input");
           customGetters[field.id] = () => el.value;
         }
       });
@@ -711,13 +907,12 @@ class ISBNModal extends Modal {
 
     // ── Buttons ───────────────────────────────────────────────────────────
     const saveFirst = this.plugin.settings.saveAndAddFirst;
-    const accentStyle  = "background:var(--interactive-accent); color:var(--text-on-accent); padding:0.4rem 1rem; border-radius:4px;";
-    const normalStyle  = "padding:0.4rem 1rem;";
-
-    const btnRow = contentEl.createDiv(); btnRow.style.cssText = "display:flex; gap:0.75rem; justify-content:flex-end; margin-top:1.25rem;";
-    const backBtn        = btnRow.createEl("button", { text: "← Back" }); backBtn.style.cssText = normalStyle;
-    const saveAnotherBtn = btnRow.createEl("button", { text: "Save & Add Another" }); saveAnotherBtn.style.cssText = saveFirst ? accentStyle : normalStyle;
-    const saveBtn        = btnRow.createEl("button", { text: "Save Book" }); saveBtn.style.cssText = saveFirst ? normalStyle : accentStyle;
+    const btnRow = contentEl.createDiv({ cls: "bc-btn-row" });
+    const backBtn        = btnRow.createEl("button", { cls: "bc-btn-secondary", text: "← Back" });
+    const saveAnotherBtn = btnRow.createEl("button", { text: "Save & add another" });
+    const saveBtn        = btnRow.createEl("button", { text: "Save book" });
+    saveAnotherBtn.addClass(saveFirst ? "bc-btn-primary" : "bc-btn-secondary");
+    saveBtn.addClass(saveFirst ? "bc-btn-secondary" : "bc-btn-primary");
 
     const collectCustomValues = (): Record<string, string> => {
       const vals: Record<string, string> = {};
@@ -726,15 +921,17 @@ class ISBNModal extends Modal {
     };
 
     backBtn.addEventListener("click", () => this.showScanStep());
-    saveBtn.addEventListener("click", async () => {
-      saveBtn.disabled = true; saveBtn.setText("Saving...");
-      await this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value, collectCustomValues());
-      this.close();
+    saveBtn.addEventListener("click", () => {
+      saveBtn.disabled = true;
+      saveBtn.setText("Saving...");
+      void this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value, collectCustomValues())
+        .then(() => this.close());
     });
-    saveAnotherBtn.addEventListener("click", async () => {
-      saveAnotherBtn.disabled = true; saveAnotherBtn.setText("Saving...");
-      await this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value, collectCustomValues());
-      this.showScanStep();
+    saveAnotherBtn.addEventListener("click", () => {
+      saveAnotherBtn.disabled = true;
+      saveAnotherBtn.setText("Saving...");
+      void this.plugin.createBookNote(book, conditionEl.value, acquiredEl.value, valuationEl.value, copiesEl.value, collectCustomValues())
+        .then(() => this.showScanStep());
     });
   }
 
@@ -748,88 +945,130 @@ class BookCatalogSettingTab extends PluginSettingTab {
   constructor(app: App, plugin: BookCatalogPlugin) { super(app, plugin); this.plugin = plugin; }
 
   display(): void {
-    const { containerEl } = this; containerEl.empty();
-    containerEl.createEl("h2", { text: "Book Catalog Settings" });
+    const { containerEl } = this;
+    containerEl.empty();
 
-    // ── File Organization ─────────────────────────────────────────────────
-    containerEl.createEl("h3", { text: "File Organization" });
-    containerEl.createEl("p", { text: "Set where the catalog base file and book notes should live. After changing these, use Reorganize Files below to move existing files." }).style.cssText = "color:var(--text-muted); font-size:0.85rem; margin-bottom:0.75rem;";
-    new Setting(containerEl).setName("Catalog folder").setDesc("Folder where Book Catalog.base is created. Can be nested, e.g. '03 Resources/Books'.").addText((text) => text.setPlaceholder("Books").setValue(this.plugin.settings.baseFolder).onChange(async (value) => { this.plugin.settings.baseFolder = value.trim(); await this.plugin.saveSettings(); }));
-    new Setting(containerEl).setName("Notes subfolder").setDesc("Subfolder inside the catalog folder for book notes. Leave blank to store notes directly in the catalog folder.").addText((text) => text.setPlaceholder("Notes").setValue(this.plugin.settings.notesSubfolder).onChange(async (value) => { this.plugin.settings.notesSubfolder = value.trim(); await this.plugin.saveSettings(); }));
-    const previewEl = containerEl.createDiv(); previewEl.style.cssText = "background:var(--background-secondary); border-radius:6px; padding:0.75rem 1rem; margin-bottom:1rem; font-size:0.85rem;";
-    const updatePreview = () => { previewEl.empty(); previewEl.createEl("p", { text: `📄 Base file: ${getBasePath(this.plugin.settings.baseFolder)}` }).style.cssText = "margin:0 0 0.25rem; color:var(--text-muted);"; previewEl.createEl("p", { text: `📚 Book notes: ${getNotesFolder(this.plugin.settings)}/` }).style.cssText = "margin:0; color:var(--text-muted);"; };
+    // ── File organization ─────────────────────────────────────────────────
+    new Setting(containerEl).setName("File organization").setHeading();
+    containerEl.createEl("p", { cls: "bc-hint", text: "Set where the catalog base file and book notes should live. After changing these, use Reorganize files below to move existing files." });
+
+    new Setting(containerEl)
+      .setName("Catalog folder")
+      .setDesc("Folder where Book Catalog.base is created. Can be nested, e.g. '03 Resources/Books'.")
+      .addText((text) => text.setPlaceholder("Books").setValue(this.plugin.settings.baseFolder).onChange(async (value) => {
+        this.plugin.settings.baseFolder = value.trim();
+        await this.plugin.saveSettings();
+      }));
+
+    new Setting(containerEl)
+      .setName("Notes subfolder")
+      .setDesc("Subfolder inside the catalog folder for book notes. Leave blank to store notes directly in the catalog folder.")
+      .addText((text) => text.setPlaceholder("Notes").setValue(this.plugin.settings.notesSubfolder).onChange(async (value) => {
+        this.plugin.settings.notesSubfolder = value.trim();
+        await this.plugin.saveSettings();
+      }));
+
+    const previewEl = containerEl.createDiv({ cls: "bc-path-preview" });
+    const updatePreview = () => {
+      previewEl.empty();
+      previewEl.createEl("p", { cls: "bc-path-line", text: `📄 Base file: ${getBasePath(this.plugin.settings.baseFolder)}` });
+      previewEl.createEl("p", { cls: "bc-path-line-last", text: `📚 Book notes: ${getNotesFolder(this.plugin.settings)}/` });
+    };
     updatePreview();
     const origSave = this.plugin.saveSettings.bind(this.plugin);
     this.plugin.saveSettings = async () => { await origSave(); updatePreview(); };
-    new Setting(containerEl).setName("Create or update base file").setDesc("Creates Book Catalog.base at the path shown above with the correct filters and column layout.").addButton((btn) => btn.setButtonText("Create Base File").setCta().onClick(async () => { await this.plugin.createBaseFile(); }));
 
-    containerEl.createEl("hr").style.margin = "1.5rem 0";
-
-    // ── Reorganize ────────────────────────────────────────────────────────
-    containerEl.createEl("h3", { text: "Reorganize Files" });
-    containerEl.createEl("p", { text: "Move existing book notes and the base file to match your current folder settings. Scans your entire vault first so manually-moved files are always found." }).style.cssText = "color:var(--text-muted); font-size:0.85rem; margin-bottom:0.75rem;";
-    new Setting(containerEl).setName("Scan & reorganize").setDesc("Scans the entire vault, shows what was found and where, then lets you confirm before moving anything.").addButton((btn) => btn.setButtonText("Scan Vault & Reorganize").setWarning().onClick(() => { new ReorganizeModal(this.app, this.plugin).open(); }));
-
-    containerEl.createEl("hr").style.margin = "1.5rem 0";
-
-    // ── Modal Preferences ─────────────────────────────────────────────────
-    containerEl.createEl("h3", { text: "Modal Preferences" });
     new Setting(containerEl)
-      .setName("Default to Save & Add Another")
-      .setDesc("When on, 'Save & Add Another' is the primary (highlighted) button in the confirm step. Turn off to make 'Save Book' the primary button instead.")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.saveAndAddFirst).onChange(async (value) => { this.plugin.settings.saveAndAddFirst = value; await this.plugin.saveSettings(); }));
+      .setName("Create or update base file")
+      .setDesc("Creates Book Catalog.base at the path shown above with the correct filters and column layout.")
+      .addButton((btn) => btn.setButtonText("Create base file").setCta().onClick(async () => { await this.plugin.createBaseFile(); }));
 
-    containerEl.createEl("hr").style.margin = "1.5rem 0";
+    containerEl.createEl("hr");
 
-    // ── Custom Fields ─────────────────────────────────────────────────────
-    containerEl.createEl("h3", { text: "Custom Fields" });
-    containerEl.createEl("p", { text: "Add your own fields to the capture modal. Each field is saved to the note's frontmatter using the field name as the YAML key." }).style.cssText = "color:var(--text-muted); font-size:0.85rem; margin-bottom:0.75rem;";
+    // ── Reorganize files ──────────────────────────────────────────────────
+    new Setting(containerEl).setName("Reorganize files").setHeading();
+    containerEl.createEl("p", { cls: "bc-hint", text: "Move existing book notes and the base file to match your current folder settings. Scans your entire vault first so manually-moved files are always found." });
 
-    const fieldListEl = containerEl.createDiv(); fieldListEl.style.cssText = "margin-bottom:1rem;";
+    new Setting(containerEl)
+      .setName("Scan & reorganize")
+      .setDesc("Scans the entire vault, shows what was found and where, then lets you confirm before moving anything.")
+      .addButton((btn) => btn.setButtonText("Scan vault & reorganize").setWarning().onClick(() => { new ReorganizeModal(this.app, this.plugin).open(); }));
+
+    containerEl.createEl("hr");
+
+    // ── Modal preferences ─────────────────────────────────────────────────
+    new Setting(containerEl).setName("Modal preferences").setHeading();
+
+    new Setting(containerEl)
+      .setName("Default to save & add another")
+      .setDesc("When on, 'Save & add another' is the primary (highlighted) button in the confirm step. Turn off to make 'Save book' the primary button instead.")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.saveAndAddFirst).onChange(async (value) => {
+        this.plugin.settings.saveAndAddFirst = value;
+        await this.plugin.saveSettings();
+      }));
+
+    containerEl.createEl("hr");
+
+    // ── Custom fields ─────────────────────────────────────────────────────
+    new Setting(containerEl).setName("Custom fields").setHeading();
+    containerEl.createEl("p", { cls: "bc-hint", text: "Add your own fields to the capture modal. Each field is saved to the note's frontmatter using the field name as the YAML key." });
+
+    const fieldListEl = containerEl.createDiv({ cls: "bc-field-list" });
     const renderFieldList = () => {
       fieldListEl.empty();
       if (this.plugin.settings.customFields.length === 0) {
-        fieldListEl.createEl("p", { text: "No custom fields yet." }).style.cssText = "color:var(--text-muted); font-size:0.85rem; font-style:italic;";
+        fieldListEl.createEl("p", { cls: "bc-field-empty", text: "No custom fields yet." });
         return;
       }
-      const typeBadgeStyle = "font-size:0.75rem; padding:0.1rem 0.4rem; border-radius:3px; background:var(--background-modifier-border); color:var(--text-muted); margin-left:0.5rem;";
       this.plugin.settings.customFields.forEach((field, index) => {
-        const row = fieldListEl.createDiv(); row.style.cssText = "display:flex; align-items:center; justify-content:space-between; padding:0.4rem 0.6rem; border-radius:4px; margin-bottom:0.3rem; background:var(--background-secondary);";
-        const nameEl = row.createDiv(); nameEl.style.cssText = "display:flex; align-items:center;";
-        nameEl.createEl("span", { text: field.name }).style.cssText = "font-size:0.9rem;";
-        nameEl.createEl("span", { text: field.type }).style.cssText = typeBadgeStyle;
-        const deleteBtn = row.createEl("button", { text: "✕" }); deleteBtn.style.cssText = "padding:0.1rem 0.5rem; font-size:0.8rem; color:var(--text-muted);";
-        deleteBtn.addEventListener("click", async () => {
+        const row = fieldListEl.createDiv({ cls: "bc-field-item" });
+        const nameEl = row.createDiv({ cls: "bc-field-name-wrap" });
+        nameEl.createEl("span", { cls: "bc-field-name", text: field.name });
+        nameEl.createEl("span", { cls: "bc-type-badge", text: field.type });
+        const deleteBtn = row.createEl("button", { cls: "bc-field-delete", text: "✕" });
+        deleteBtn.addEventListener("click", () => {
           this.plugin.settings.customFields.splice(index, 1);
-          await this.plugin.saveSettings();
-          renderFieldList();
+          void this.plugin.saveSettings().then(() => renderFieldList());
         });
       });
     };
     renderFieldList();
 
-    // Add field form
-    const addRow = containerEl.createDiv(); addRow.style.cssText = "display:flex; gap:0.5rem; align-items:center;";
-    const nameInput = addRow.createEl("input", { type: "text", placeholder: "Field name" }); nameInput.style.cssText = "flex:1; padding:0.35rem;";
-    const typeSelect = addRow.createEl("select"); typeSelect.style.cssText = "padding:0.35rem;";
-    (["text", "number", "date", "boolean"] as const).forEach((t) => { const opt = typeSelect.createEl("option", { text: t }); opt.value = t; });
-    const addBtn = addRow.createEl("button", { text: "Add Field" }); addBtn.style.cssText = "padding:0.35rem 0.75rem; background:var(--interactive-accent); color:var(--text-on-accent); border-radius:4px;";
-    addBtn.addEventListener("click", async () => {
+    const addRow = containerEl.createDiv({ cls: "bc-add-row" });
+    const nameInput = addRow.createEl("input", { type: "text", placeholder: "Field name" });
+    nameInput.addClass("bc-add-name-input");
+    const typeSelect = addRow.createEl("select");
+    typeSelect.addClass("bc-add-type-select");
+    (["text", "number", "date", "boolean"] as const).forEach((t) => {
+      const opt = typeSelect.createEl("option", { text: t });
+      opt.value = t;
+    });
+    const addBtn = addRow.createEl("button", { cls: "bc-add-btn", text: "Add field" });
+    addBtn.addEventListener("click", () => {
       const name = nameInput.value.trim();
       if (!name) { nameInput.focus(); return; }
       const key = toYamlKey(name);
-      if (this.plugin.settings.customFields.some((f) => toYamlKey(f.name) === key)) { new Notice("A field with that name already exists."); return; }
+      if (this.plugin.settings.customFields.some((f) => toYamlKey(f.name) === key)) {
+        new Notice("A field with that name already exists.");
+        return;
+      }
       this.plugin.settings.customFields.push({ id: `cf-${Date.now()}`, name, type: typeSelect.value as CustomField["type"] });
-      await this.plugin.saveSettings();
       nameInput.value = "";
-      renderFieldList();
+      void this.plugin.saveSettings().then(() => renderFieldList());
     });
     nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") addBtn.click(); });
 
-    containerEl.createEl("hr").style.margin = "1.5rem 0";
+    containerEl.createEl("hr");
 
     // ── API ───────────────────────────────────────────────────────────────
-    containerEl.createEl("h3", { text: "API" });
-    new Setting(containerEl).setName("Google Books API key").setDesc("Optional. Used as a fallback if Open Library returns no results. Get a free key at console.cloud.google.com.").addText((text) => text.setPlaceholder("AIza...").setValue(this.plugin.settings.googleBooksApiKey).onChange(async (value) => { this.plugin.settings.googleBooksApiKey = value; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName("API").setHeading();
+
+    new Setting(containerEl)
+      .setName("Google Books API key")
+      .setDesc("Optional. Used as a fallback if Open Library returns no results. Get a free key at console.cloud.google.com.")
+      .addText((text) => text.setPlaceholder("AIza...").setValue(this.plugin.settings.googleBooksApiKey).onChange(async (value) => {
+        this.plugin.settings.googleBooksApiKey = value;
+        await this.plugin.saveSettings();
+      }));
   }
 }
