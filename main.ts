@@ -257,7 +257,7 @@ export default class BookCatalogPlugin extends Plugin {
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, (await this.loadData()) as Partial<BookCatalogSettings> | null);
     if (!this.settings.customFields) this.settings.customFields = [];
   }
 
@@ -655,7 +655,7 @@ class ISBNModal extends Modal {
 
       const inputEl = tabContent.createEl("input", { type: "text", placeholder: "ISBN / barcode..." });
       inputEl.addClass("bc-isbn-input");
-      setTimeout(() => inputEl.focus(), 50);
+      window.setTimeout(() => inputEl.focus(), 50);
 
       const statusEl = tabContent.createEl("p", { cls: "bc-status", text: "" });
       const lookupBtn = tabContent.createEl("button", { cls: "bc-lookup-btn", text: "Look up book" });
@@ -693,7 +693,7 @@ class ISBNModal extends Modal {
       titleRow.createEl("label", { cls: "bc-form-label", text: "Title *" });
       const titleEl = titleRow.createEl("input", { type: "text", placeholder: "Required" });
       titleEl.addClass("bc-form-input");
-      setTimeout(() => titleEl.focus(), 50);
+      window.setTimeout(() => titleEl.focus(), 50);
 
       const authorRow = tabContent.createDiv({ cls: "bc-form-row-last" });
       authorRow.createEl("label", { cls: "bc-form-label", text: "Author" });
@@ -787,7 +787,8 @@ class ISBNModal extends Modal {
     if (book.publisher || book.publishedYear) metaEl.createEl("span", { cls: "bc-preview-detail", text: [book.publisher, book.publishedYear].filter(Boolean).join(", ") });
 
     const cache = this.plugin.app.metadataCache.getFileCache(existing);
-    const currentCopies: number = cache?.frontmatter?.copies ?? 1;
+    const rawCopies: unknown = cache?.frontmatter?.copies;
+    const currentCopies: number = typeof rawCopies === "number" ? rawCopies : 1;
     const copiesInfoEl = contentEl.createDiv({ cls: "bc-copies-info" });
     copiesInfoEl.createEl("span", { text: "Currently in catalog: " });
     copiesInfoEl.createEl("strong", { text: `${currentCopies} cop${currentCopies === 1 ? "y" : "ies"}` });
@@ -992,7 +993,7 @@ class BookCatalogSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Scan & reorganize")
       .setDesc("Scans the entire vault, shows what was found and where, then lets you confirm before moving anything.")
-      .addButton((btn) => btn.setButtonText("Scan vault & reorganize").setWarning().onClick(() => { new ReorganizeModal(this.app, this.plugin).open(); }));
+      .addButton((btn) => { btn.setButtonText("Scan vault & reorganize").onClick(() => { new ReorganizeModal(this.app, this.plugin).open(); }); btn.buttonEl.addClass("mod-warning"); });
 
     containerEl.createEl("hr");
 
